@@ -1,0 +1,14 @@
+{
+  "name": "claude-cache-warm",
+  "owner": { "name": "FiredMosquito831", "url": "https://github.com/FiredMosquito831" },
+  "description": "Prompt-cache keep-alive for Claude Code.",
+  "plugins": [
+    {
+      "name": "cache-warm",
+      "source": "./",
+      "description": "Keeps the prompt cache of idle Claude Code sessions warm. Configurable interval, on/off, idle cap, dashboard.",
+      "category": "productivity",
+      "keywords": ["prompt-cache", "keep-alive", "cost"]
+    }
+  ]
+}

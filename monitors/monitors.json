@@ -1,0 +1,7 @@
+[
+  {
+    "name": "cache-warm",
+    "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/monitor.mjs\"",
+    "description": "Prompt-cache keep-alive timer"
+  }
+]

@@ -1,0 +1,33 @@
+{
+  "name": "cache-warm",
+  "displayName": "Cache Warm",
+  "version": "0.1.0",
+  "description": "Keeps the prompt cache of idle Claude Code sessions warm with activity-aware keep-alive pings. Configurable interval, on/off switch, idle cap, cost estimates, web dashboard.",
+  "author": { "name": "FiredMosquito831", "url": "https://github.com/FiredMosquito831" },
+  "homepage": "https://github.com/FiredMosquito831/claude-cache-warm",
+  "repository": "https://github.com/FiredMosquito831/claude-cache-warm",
+  "license": "MIT",
+  "keywords": ["prompt-cache", "cache", "keep-alive", "cost", "latency"],
+  "experimental": { "monitors": "./monitors/monitors.json" },
+  "userConfig": {
+    "enabled": {
+      "type": "boolean",
+      "title": "Warm caches by default",
+      "description": "Initial state of the master switch. Change it any time with /cache-warm:on and /cache-warm:off.",
+      "default": true
+    },
+    "interval_minutes": {
+      "type": "string",
+      "title": "Ping interval (minutes)",
+      "description": "\"auto\" picks 50 on a 1-hour cache and 4 on a 5-minute cache. Otherwise a number from 1 to 59.",
+      "default": "auto"
+    },
+    "max_idle_minutes": {
+      "type": "number",
+      "title": "Stop after idle (minutes)",
+      "description": "Stop pinging a session once you have been away this long. 0 = never stop.",
+      "default": 180,
+      "min": 0
+    }
+  }
+}

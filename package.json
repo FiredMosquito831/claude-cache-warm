@@ -1,0 +1,14 @@
+{
+  "name": "claude-cache-warm",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Keeps the prompt cache of idle Claude Code sessions warm.",
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=18" },
+  "bin": { "ccw": "scripts/ccw.mjs" },
+  "scripts": {
+    "test": "node --test test/e2e.test.mjs",
+    "dashboard": "node dashboard/server.mjs"
+  }
+}

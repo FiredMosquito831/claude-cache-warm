@@ -1,0 +1,6 @@
+node_modules/
+desktop/src-tauri/target/
+desktop/src-tauri/gen/
+*.tmp
+.DS_Store
+.idea/

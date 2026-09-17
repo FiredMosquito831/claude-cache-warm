@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Local fallback page only. The remote dashboard (http://127.0.0.1:<port>) is plain web content and gets no Tauri IPC access.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

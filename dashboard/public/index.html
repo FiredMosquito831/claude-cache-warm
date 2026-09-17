@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cache Warm</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7; --surface: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+    --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11,11,11,.10);
+    --series-1: #2a78d6; --series-2: #eb6834;
+    --good: #0ca30c; --warning: #fab219; --critical: #d03b3b; --good-text: #006300;
+    --wash: rgba(11,11,11,.04);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --page: #0d0d0d; --surface: #1a1a19; --ink: #fff; --ink-2: #c3c2b7; --muted: #898781;
+      --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,.10);
+      --series-1: #3987e5; --series-2: #d95926; --good-text: #0ca30c;
+      --wash: rgba(255,255,255,.05);
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--page); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1120px; margin: 0 auto; padding: 24px 16px 64px; }
+  header { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
+  h1 { font-size: 20px; margin: 0; font-weight: 650; }
+  h2 { font-size: 14px; margin: 0 0 2px; font-weight: 650; }
+  .sub { color: var(--ink-2); font-size: 13px; margin: 0 0 14px; }
+  .spacer { flex: 1; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+  .grid { display: grid; gap: 12px; }
+  .tiles { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); margin-bottom: 12px; }
+  .two { grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); margin-bottom: 12px; }
+  .tile .label { color: var(--ink-2); font-size: 13px; }
+  .tile .value { font-size: 26px; font-weight: 650; margin-top: 2px; }
+  .tile.hero .value { font-size: 48px; line-height: 1.1; }
+  .tile .note { color: var(--muted); font-size: 12px; margin-top: 2px; }
+
+  /* master switch */
+  .switch { display: inline-flex; align-items: center; gap: 10px; cursor: pointer; user-select: none; font-weight: 600; }
+  .switch input { position: absolute; opacity: 0; }
+  .switch .track { width: 42px; height: 24px; border-radius: 12px; background: var(--axis); position: relative; transition: background .15s; }
+  .switch .track::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: transform .15s; box-shadow: 0 1px 2px rgba(0,0,0,.3); }
+  .switch input:checked + .track { background: var(--good); }
+  .switch input:checked + .track::after { transform: translateX(18px); }
+  .switch input:focus-visible + .track { outline: 2px solid var(--series-1); outline-offset: 2px; }
+
+  form.settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px 16px; align-items: end; }
+  label.field { display: grid; gap: 4px; font-size: 13px; color: var(--ink-2); }
+  label.field small { color: var(--muted); }
+  input[type=number], select, button { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--axis); border-radius: 7px; padding: 6px 9px; }
+  button { cursor: pointer; }
+  button:hover { background: var(--wash); }
+  button.primary { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+  .seg { display: inline-flex; border: 1px solid var(--axis); border-radius: 7px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; padding: 5px 11px; }
+  .seg button[aria-pressed=true] { background: var(--ink); color: var(--surface); }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; color: var(--muted); font-weight: 500; padding: 6px 8px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+  td { padding: 8px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tr:last-child td { border-bottom: 0; }
+  .path { color: var(--muted); font-size: 12px; word-break: break-all; }
+  .scroll { overflow-x: auto; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+  .dot.warming { background: var(--good); } .dot.expired, .dot.idle-cap { background: var(--warning); } .dot.nomonitor { background: var(--critical); }
+  .empty { color: var(--muted); padding: 18px 0; text-align: center; }
+
+  .legend { display: flex; gap: 16px; font-size: 12px; color: var(--ink-2); margin: 0 0 8px; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+  svg text { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  svg text.val { fill: var(--ink-2); }
+  .bar { transition: opacity .1s; } .bar:hover, .bar:focus { opacity: .8; outline: none; }
+  #tip { position: fixed; pointer-events: none; background: var(--ink); color: var(--surface); padding: 7px 10px; border-radius: 7px; font-size: 12px; z-index: 10; display: none; max-width: 260px; }
+  #tip b { font-size: 13px; } #tip div { opacity: .8; }
+  details { margin-top: 10px; font-size: 12px; color: var(--ink-2); } summary { cursor: pointer; }
+  .loading { opacity: .45; transition: opacity .2s; }
+  #toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--surface); padding: 8px 14px; border-radius: 8px; display: none; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Cache Warm</h1>
+    <label class="switch"><input type="checkbox" id="master"><span class="track"></span><span id="masterLabel">Warming</span></label>
+    <span class="spacer"></span>
+    <div class="seg" id="range" role="group" aria-label="Date range">
+      <button data-days="1">Today</button><button data-days="7" aria-pressed="true">7 days</button><button data-days="30">30 days</button>
+    </div>
+  </header>
+
+  <section class="card" style="margin-bottom:12px">
+    <h2>Live sessions</h2>
+    <p class="sub">A ping is sent only when a session has been silent for one interval, so active sessions cost nothing extra.</p>
+    <div class="scroll"><table id="sessions"></table></div>
+  </section>
+
+  <section class="card" style="margin-bottom:12px">
+    <h2>Settings</h2>
+    <p class="sub">Applies to running sessions within 5 seconds. No restart.</p>
+    <form class="settings" id="settings">
+      <label class="field">Ping interval
+        <select name="intervalMinutes">
+          <option value="auto">Auto (50 min on 1h cache, 4 min on 5m)</option>
+          <option>4</option><option>10</option><option>15</option><option>20</option><option>30</option><option>45</option><option>50</option><option>55</option>
+        </select></label>
+      <label class="field">Stop after idle (minutes, 0 = never) <input type="number" name="maxIdleMinutes" min="0" step="10"></label>
+      <label class="field">Skip sessions below (tokens) <input type="number" name="minContextTokens" min="0" step="1000"></label>
+      <label class="field">Engine
+        <select name="engine"><option value="monitor">Monitor (activity-aware)</option><option value="cron">Cron (in-session fallback)</option></select></label>
+      <button class="primary" type="submit">Save</button>
+    </form>
+  </section>
+
+  <div id="analytics">
+    <div class="grid tiles">
+      <div class="card tile hero"><div class="label">Cache hit ratio</div><div class="value" id="tHit">-</div><div class="note" id="tHitNote">of input tokens read from cache</div></div>
+      <div class="card tile"><div class="label">Cold rebuilds</div><div class="value" id="tReb">-</div><div class="note" id="tRebNote"></div></div>
+      <div class="card tile"><div class="label">Avoidable with warming</div><div class="value" id="tAvoid">-</div><div class="note">rebuild cost minus ping cost, gaps within the idle cap</div></div>
+      <div class="card tile"><div class="label">Pings sent</div><div class="value" id="tPings">-</div><div class="note" id="tPingsNote"></div></div>
+    </div>
+
+    <div class="grid two">
+      <section class="card">
+        <h2>Where the cache dies</h2>
+        <p class="sub">Pauses of 5 minutes or more between requests, by length. Orange pauses ended in a full-price rewrite of the context.</p>
+        <div class="legend"><span><i style="background:var(--series-1)"></i>Cache survived</span><span><i style="background:var(--series-2)"></i>Cold rebuild</span></div>
+        <div id="gapChart"></div>
+        <details><summary>Table</summary><table id="gapTable"></table></details>
+      </section>
+      <section class="card">
+        <h2>Tokens rewritten after expiry, per day</h2>
+        <p class="sub">Context that had to be re-cached because the session sat idle past its TTL.</p>
+        <div id="dayChart"></div>
+        <details><summary>Table</summary><table id="dayTable"></table></details>
+      </section>
+    </div>
+
+    <section class="card">
+      <h2>Recent cold rebuilds</h2>
+      <p class="sub">API list prices. On a subscription the same tokens come out of your usage limits instead.</p>
+      <div class="scroll"><table id="rebuilds"></table></div>
+    </section>
+  </div>
+</main>
+<div id="tip"></div><div id="toast"></div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const el = (tag, props = {}, ...kids) => { const n = Object.assign(document.createElement(tag), props); n.append(...kids); return n; };
+const svgEl = (tag, attrs = {}) => { const n = document.createElementNS('http://www.w3.org/2000/svg', tag); for (const k in attrs) n.setAttribute(k, attrs[k]); return n; };
+const fmtTok = (n) => n >= 1e9 ? (n / 1e9).toFixed(2) + 'B' : n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'K' : String(Math.round(n || 0));
+const fmtUsd = (n) => '$' + (n >= 100 ? n.toFixed(0) : n >= 1 ? n.toFixed(2) : n.toFixed(4));
+const fmtDur = (ms) => { const s = Math.max(0, Math.round(ms / 1000)); return s < 60 ? s + 's' : s < 3600 ? Math.floor(s / 60) + 'm ' + String(s % 60).padStart(2, '0') + 's' : Math.floor(s / 3600) + 'h ' + String(Math.floor(s % 3600 / 60)).padStart(2, '0') + 'm'; };
+const fmtGap = (min) => min < 60 ? Math.round(min) + ' min' : min < 1440 ? (min / 60).toFixed(1) + ' h' : (min / 1440).toFixed(1) + ' d';
+
+let state = null, skew = 0, days = 7;
+
+function toast(msg) { const t = $('#toast'); t.textContent = msg; t.style.display = 'block'; clearTimeout(toast.h); toast.h = setTimeout(() => t.style.display = 'none', 2200); }
+async function post(url, body) {
+  const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const j = await r.json(); if (!r.ok) throw new Error(j.error || r.statusText); return j;
+}
+
+// ---- tooltip (values lead, labels follow; text only via textContent)
+const tip = $('#tip');
+function showTip(evt, value, lines) {
+  tip.replaceChildren(el('b', { textContent: value }), ...lines.map((l) => el('div', { textContent: l })));
+  tip.style.display = 'block';
+  const r = evt.target.getBoundingClientRect();
+  const x = evt.clientX ?? r.left + r.width / 2, y = evt.clientY ?? r.top;
+  tip.style.left = Math.min(x + 12, innerWidth - tip.offsetWidth - 8) + 'px';
+  tip.style.top = Math.max(8, y - tip.offsetHeight - 10) + 'px';
+}
+const hideTip = () => tip.style.display = 'none';
+function hover(node, value, lines) {
+  node.setAttribute('tabindex', '0'); node.classList.add('bar');
+  node.addEventListener('pointermove', (e) => showTip(e, value, lines));
+  node.addEventListener('focus', (e) => showTip(e, value, lines));
+  node.addEventListener('pointerleave', hideTip); node.addEventListener('blur', hideTip);
+}
+
+// Column with a 4px rounded data-end, square at the baseline.
+function columnPath(x, y, w, h, roundTop) {
+  const r = roundTop ? Math.min(4, h, w / 2) : 0;
+  return `M${x},${y + h}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + h}Z`;
+}
+function niceMax(v) { if (v <= 0) return 1; const p = 10 ** Math.floor(Math.log10(v)); return [1, 2, 2.5, 5, 10].map((m) => m * p).find((m) => m >= v); }
+
+// cols: [{ label, segments: [{ value, color, name }], tip: [value, lines] }]
+function columnChart(host, cols, fmt) {
+  const W = 520, H = 220, L = 44, B = 26, T = 18, plotH = H - B - T, plotW = W - L - 8;
+  const max = niceMax(Math.max(...cols.map((c) => c.segments.reduce((a, s) => a + s.value, 0))));
+  const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, width: '100%', role: 'img' });
+  for (let i = 0; i <= 4; i++) {
+    const y = T + plotH - (plotH * i) / 4;
+    svg.append(svgEl('line', { x1: L, x2: W - 8, y1: y, y2: y, stroke: i ? 'var(--grid)' : 'var(--axis)', 'stroke-width': 1 }));
+    const t = svgEl('text', { x: L - 6, y: y + 4, 'text-anchor': 'end' }); t.textContent = fmt((max * i) / 4); svg.append(t);
+  }
+  const band = plotW / cols.length, bw = Math.min(24, band - 6);
+  const everyNth = Math.ceil(cols.length / 8);
+  cols.forEach((c, i) => {
+    const x = L + band * i + (band - bw) / 2;
+    let y = T + plotH;
+    const live = c.segments.filter((s) => s.value > 0);
+    const g = svgEl('g');
+    live.forEach((s, k) => {
+      const h = Math.max(2, (s.value / max) * plotH);
+      y -= h;
+      const gap = k > 0 ? 2 : 0; // 2px surface gap between stacked segments
+      g.append(svgEl('path', { d: columnPath(x, y, bw, h - gap, k === live.length - 1), fill: s.color }));
+    });
+    // Hit target spans the whole band, not just the painted pixels.
+    const hit = svgEl('rect', { x: L + band * i, y: T, width: band, height: plotH, fill: 'transparent' });
+    hover(hit, c.tip[0], c.tip[1]);
+    g.append(hit); svg.append(g);
+    if (i % everyNth === 0) { const t = svgEl('text', { x: x + bw / 2, y: H - 8, 'text-anchor': 'middle' }); t.textContent = c.label; svg.append(t); }
+  });
+  host.replaceChildren(svg);
+}
+
+function renderSessions() {
+  const now = Date.now() - skew;
+  const rows = state.sessions.filter((s) => s.status !== 'ended');
+  const table = $('#sessions');
+  if (!rows.length) return table.replaceChildren(el('tr', {}, el('td', { className: 'empty', textContent: 'No live sessions yet. A session registers on its first prompt after the plugin is enabled.' })));
+  const LABEL = { warming: 'Warming', off: 'Off', 'small-context': 'Context too small', 'idle-cap': 'Idle cap reached', expired: 'Cache already expired' };
+  const head = el('tr', {}, ...['Session', 'Status', 'Next ping', 'Context', 'TTL / every', 'Idle', 'Pings', 'Per ping', 'Cold return', ''].map((h, i) => el('th', { textContent: h, className: i >= 3 && i <= 8 ? 'num' : '' })));
+  table.replaceChildren(head, ...rows.map((s) => {
+    const noMon = !s.monitorAlive && state.config.engine === 'monitor';
+    const status = el('span', { className: 'pill' }, el('span', { className: 'dot ' + (noMon ? 'nomonitor' : s.status) }), noMon ? 'No monitor running' : LABEL[s.status] || s.status);
+    const effective = s.enabled ?? state.config.enabled;
+    const btn = el('button', { textContent: effective ? 'Pause' : 'Resume', onclick: async () => { await post('/api/sessions/' + s.sessionId, { enabled: !effective }); refreshState(); } });
+    const follow = s.enabled === null || s.enabled === undefined ? '' : el('button', { textContent: 'Follow global', style: 'margin-left:6px', onclick: async () => { await post('/api/sessions/' + s.sessionId, { enabled: null }); refreshState(); } });
+    return el('tr', {},
+      el('td', {}, el('div', { textContent: s.sessionId.slice(0, 8) + (s.model ? '  ·  ' + s.model.replace('claude-', '') : '') }), el('div', { className: 'path', textContent: s.cwd || '' })),
+      el('td', {}, status, s.warning ? el('div', { className: 'path', textContent: s.warning }) : ''),
+      el('td', { textContent: s.nextPingAt ? fmtDur(s.nextPingAt - now) : '-' }),
+      el('td', { className: 'num', textContent: fmtTok(s.contextTokens) }),
+      el('td', { className: 'num', textContent: `${s.ttl} / ${s.intervalMinutes}m` }),
+      el('td', { className: 'num', textContent: fmtDur(now - s.lastHumanAt) }),
+      el('td', { className: 'num', textContent: `${s.pingsSinceUser} (${s.pingsTotal} total)` }),
+      el('td', { className: 'num', textContent: fmtUsd(s.pingUsd) }),
+      el('td', { className: 'num', textContent: fmtUsd(s.rebuildUsd) }),
+      el('td', {}, btn, follow));
+  }));
+}
+
+function renderConfig() {
+  const c = state.config, f = $('#settings');
+  $('#master').checked = c.enabled; $('#masterLabel').textContent = c.enabled ? 'Warming on' : 'Warming off';
+  if (f.contains(document.activeElement)) return; // don't fight the user mid-edit
+  const sel = f.intervalMinutes;
+  if (![...sel.options].some((o) => o.value === String(c.intervalMinutes))) sel.append(el('option', { textContent: String(c.intervalMinutes) }));
+  sel.value = String(c.intervalMinutes);
+  f.maxIdleMinutes.value = c.maxIdleMinutes; f.minContextTokens.value = c.minContextTokens; f.engine.value = c.engine;
+}
+
+function renderAnalytics(a) {
+  const t = a.totals;
+  $('#tHit').textContent = (t.hitRatio * 100).toFixed(1) + '%';
+  $('#tHitNote').textContent = `${fmtTok(t.read)} read · ${fmtTok(t.write)} written · ${t.requests.toLocaleString()} requests in ${t.sessions} sessions`;
+  $('#tReb').textContent = a.rebuilds.length >= 50 ? '50+' : String(a.gaps.reduce((n, g) => n + g.rebuilds, 0));
+  $('#tRebNote').textContent = `${fmtTok(t.rebuildTokens)} tokens rewritten, about ${fmtUsd(t.rebuildUsd)}`;
+  $('#tAvoid').textContent = fmtUsd(t.avoidableUsd);
+  $('#tPings').textContent = a.pings.sent.toLocaleString();
+  $('#tPingsNote').textContent = a.pings.sent ? `${a.pings.hits}/${a.pings.verified} verified as cache hits · about ${fmtUsd(a.pings.estCostUsd)}` : 'none yet in this range';
+
+  const gaps = a.gaps.slice(1); // pauses under 5 minutes can never expire a cache
+  columnChart($('#gapChart'), gaps.map((g) => ({
+    label: g.label,
+    segments: [{ value: g.count - g.rebuilds, color: 'var(--series-1)' }, { value: g.rebuilds, color: 'var(--series-2)' }],
+    tip: [`${g.count} pauses`, [`${g.rebuilds} cold rebuilds`, `${g.count - g.rebuilds} cache survived`, g.label]],
+  })), (v) => Math.round(v).toLocaleString());
+  $('#gapTable').replaceChildren(el('tr', {}, ...['Pause', 'Count', 'Cold rebuilds'].map((h, i) => el('th', { textContent: h, className: i ? 'num' : '' }))),
+    ...a.gaps.map((g) => el('tr', {}, el('td', { textContent: g.label }), el('td', { className: 'num', textContent: g.count.toLocaleString() }), el('td', { className: 'num', textContent: g.rebuilds }))));
+
+  const rebuiltByDay = new Map();
+  for (const r of a.rebuilds) { const d = new Date(r.t); const k = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; rebuiltByDay.set(k, (rebuiltByDay.get(k) || 0) + r.tokens); }
+  columnChart($('#dayChart'), a.daily.map((d) => ({
+    label: d.day.slice(5),
+    segments: [{ value: rebuiltByDay.get(d.day) || 0, color: 'var(--series-2)' }],
+    tip: [fmtTok(rebuiltByDay.get(d.day) || 0) + ' tokens', [`${d.rebuilds} cold rebuilds`, `${d.requests.toLocaleString()} requests`, d.day]],
+  })), fmtTok);
+  $('#dayTable').replaceChildren(el('tr', {}, ...['Day', 'Rewritten', 'Rebuilds', 'Requests'].map((h, i) => el('th', { textContent: h, className: i ? 'num' : '' }))),
+    ...a.daily.map((d) => el('tr', {}, el('td', { textContent: d.day }), el('td', { className: 'num', textContent: fmtTok(rebuiltByDay.get(d.day) || 0) }), el('td', { className: 'num', textContent: d.rebuilds }), el('td', { className: 'num', textContent: d.requests.toLocaleString() }))));
+
+  const rb = $('#rebuilds');
+  if (!a.rebuilds.length) return rb.replaceChildren(el('tr', {}, el('td', { className: 'empty', textContent: 'No cold rebuilds in this range.' })));
+  rb.replaceChildren(el('tr', {}, ...['When', 'Project', 'Away for', 'Rewritten', 'Cost', 'Warming instead', 'Verdict'].map((h, i) => el('th', { textContent: h, className: i >= 2 && i <= 5 ? 'num' : '' }))),
+    ...a.rebuilds.map((r) => el('tr', {},
+      el('td', { textContent: new Date(r.t).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) }),
+      el('td', {}, el('div', { textContent: (r.cwd || '').split(/[\\/]/).pop() || '-' }), el('div', { className: 'path', textContent: `${(r.model || '').replace('claude-', '')} · ${r.ttl} cache` })),
+      el('td', { className: 'num', textContent: fmtGap(r.gapMin) }),
+      el('td', { className: 'num', textContent: fmtTok(r.tokens) }),
+      el('td', { className: 'num', textContent: fmtUsd(r.usd) }),
+      el('td', { className: 'num', textContent: `${fmtUsd(r.warmUsd)} (${r.pings} pings)` }),
+      el('td', { textContent: !r.avoidable ? 'Past idle cap' : r.warmUsd < r.usd ? 'Warming wins' : 'Rebuild was cheaper' }))));
+}
+
+async function refreshState() {
+  try {
+    state = await (await fetch('/api/state')).json();
+    skew = Date.now() - state.now;
+    renderConfig(); renderSessions();
+  } catch { /* server restarting */ }
+}
+async function refreshAnalytics() {
+  $('#analytics').classList.add('loading'); // keep the previous frame while refetching
+  try { renderAnalytics(await (await fetch('/api/analytics?days=' + days)).json()); } catch (e) { toast('Analytics failed: ' + e.message); }
+  $('#analytics').classList.remove('loading');
+}
+
+$('#master').addEventListener('change', async (e) => { await post('/api/config', { enabled: e.target.checked }); toast(e.target.checked ? 'Warming on' : 'Warming off'); refreshState(); });
+$('#settings').addEventListener('submit', async (e) => {
+  e.preventDefault(); const f = e.target;
+  try {
+    await post('/api/config', { intervalMinutes: f.intervalMinutes.value === 'auto' ? 'auto' : Number(f.intervalMinutes.value), maxIdleMinutes: Number(f.maxIdleMinutes.value), minContextTokens: Number(f.minContextTokens.value), engine: f.engine.value });
+    document.activeElement.blur(); toast('Saved'); refreshState(); refreshAnalytics();
+  } catch (err) { toast(err.message); }
+});
+$('#range').addEventListener('click', (e) => {
+  if (!e.target.dataset.days) return;
+  days = Number(e.target.dataset.days);
+  for (const b of $('#range').children) b.setAttribute('aria-pressed', b === e.target);
+  refreshAnalytics();
+});
+
+refreshState(); refreshAnalytics();
+setInterval(refreshState, 5000);
+setInterval(() => state && renderSessions(), 1000); // countdown tick
+setInterval(refreshAnalytics, 5 * 60_000);
+</script>
+</body>
+</html>
