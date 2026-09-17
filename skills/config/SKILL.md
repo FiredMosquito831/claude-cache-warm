@@ -8,6 +8,9 @@ Control the cache-warm plugin through its CLI: `node "${CLAUDE_PLUGIN_ROOT}/scri
 
 | User wants | Command |
 | :--- | :--- |
+| Warm every idle session, or only ones waiting on background work (default) | `when always` / `when background-work` |
+| Any of the above for one session only | append `--session` (`follow` clears the overrides) |
+| Status line segment | `statusline install` / `statusline uninstall` |
 | Change ping interval | `interval <minutes>` or `interval auto` |
 | Stop pinging after N idle minutes | `set maxIdleMinutes <N>` (0 = never) |
 | Skip small sessions | `set minContextTokens <N>` |

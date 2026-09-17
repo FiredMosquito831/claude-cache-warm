@@ -2,9 +2,12 @@
 
 Keeps the prompt cache of **idle Claude Code sessions** warm, so coming back from a break doesn't cost a full-price rewrite of your whole context.
 
-- **Plugin** for Claude Code: on/off switch, configurable interval, idle cap, per-session pause.
-- **Dashboard** (local web UI): live sessions with ping countdowns, settings, and analytics mined from your own transcripts: hit ratio, cold rebuilds, what warming would have saved.
-- **Tray app** (Tauri, optional): toggle and interval from the system tray, opens the dashboard.
+- **Plugin** for Claude Code: on/off switch, configurable interval, idle cap, per-session overrides. By default it only warms sessions that are waiting on a subagent or background task.
+- **Status line segment**: warming state, context tokens, cached tokens, time until the cache expires. Wraps your existing status line instead of replacing it.
+- **Dashboard** (local web UI): live sessions with ping countdowns, per-session settings, and analytics mined from your own transcripts: hit ratio, cold rebuilds, what warming would have saved.
+- **Tray app** (Tauri, optional): global hotkeys (`Ctrl+Alt+W` toggle, `Ctrl+Alt+D` dashboard), toggle and interval from the system tray.
+
+**New here? Read the [usage tutorial](docs/TUTORIAL.md).**
 
 Zero runtime dependencies. Node 18+.
 
@@ -26,7 +29,7 @@ Every cache hit resets the timer. So one tiny turn shortly before expiry keeps a
 /plugin install cache-warm@claude-cache-warm
 ```
 
-Start a new session. That's it: warming is on by default with `auto` interval.
+Start a new session. That's it: warming is on, with `auto` interval, for sessions that are waiting on background work.
 
 Local development: `claude --plugin-dir "path/to/claude cache warm"`.
 
@@ -38,9 +41,12 @@ Local development: `claude --plugin-dir "path/to/claude cache warm"`.
 | `/cache-warm:off` | `ccw off` | Master switch off |
 | `/cache-warm:off session` | `ccw off --session` | Pause only this session (`ccw follow` to undo) |
 | `/cache-warm:status` | `ccw status` | Sessions, next-ping countdown, cost per ping |
+| | `ccw when always` | Warm any idle session, not only ones with background work (`background-work` is the default) |
 | `/cache-warm:config interval 30` | `ccw interval 30` | Ping interval in minutes, or `auto` |
 | `/cache-warm:config idle 240` | `ccw set maxIdleMinutes 240` | Stop pinging after this long away (0 = never) |
-| `/cache-warm:config dashboard` | `ccw dashboard` | Open `http://127.0.0.1:4777/` |
+| `/cache-warm:dashboard` | `ccw dashboard` | Open `http://127.0.0.1:4777/` (live sessions, per-session settings, analytics) |
+| `/cache-warm:statusline` | `ccw statusline install` | Add the status line segment (`uninstall` restores the previous one) |
+| | `ccw interval 20 --session` | Any of `on`, `off`, `when`, `interval`, `set maxIdleMinutes` for one session only; `ccw follow` clears |
 | | `ccw doctor` | Check that hooks and the monitor are alive |
 
 Every change applies to running sessions within 5 seconds. Nothing needs a restart.
@@ -50,6 +56,7 @@ Every change applies to running sessions within 5 seconds. Nothing needs a resta
 | Setting | Default | Meaning |
 | :--- | :--- | :--- |
 | `enabled` | `true` | Master switch |
+| `warmWhen` | `background-work` | `background-work`: only while a subagent or background shell command is running in the session. `always`: any idle session |
 | `intervalMinutes` | `auto` | `auto` = 50 on a 1h cache, 4 on a 5m cache (detected from the transcript). Must be shorter than the TTL. |
 | `maxIdleMinutes` | `180` | Stop pinging once you've been away this long |
 | `minContextTokens` | `20000` | Small contexts are cheap to rebuild; skip them |
@@ -61,8 +68,8 @@ Stored in `~/.claude-cache-warm/config.json` (override the directory with `CCW_H
 ## How it works
 
 ```
-hooks (SessionStart / UserPromptSubmit / Stop / SessionEnd)
-   └─ write activity timestamps ─────────┐
+hooks (SessionStart / UserPromptSubmit / Stop / SubagentStart / SubagentStop / PostToolUse / SessionEnd)
+   └─ write activity + background-work markers ─┐
                                          ▼
                           ~/.claude-cache-warm/   ◄── ccw CLI, dashboard, tray app edit config.json
                                          ▲
@@ -74,8 +81,9 @@ plugin monitor (one process per session) ┘
 
 The ping goes **through the live session itself**, so it hits exactly the same cache prefix (same system prompt, tools, history). An external `claude -p --resume` or a raw API call can't guarantee that.
 
-It is **activity-aware**. The timer counts from the last request of any kind, so a session you are actively using is never pinged. It also refuses to ping when:
+It is **activity-aware**. The timer counts from the last request of the main conversation, so a session you are actively using is never pinged. It also refuses to ping when:
 
+- nothing is running in the background (default `warmWhen: background-work`; subagents are tracked through `SubagentStart`/`SubagentStop`, background shell commands through `PostToolUse`),
 - the cache has already expired (laptop slept: a ping would *be* the expensive rewrite),
 - you've been away longer than `maxIdleMinutes`,
 - the context is below `minContextTokens`,
@@ -99,7 +107,8 @@ Plugin monitors are an experimental Claude Code feature and only run in interact
 
 1. **Get the 1-hour TTL first.** It turns 15 pings an hour into 1. Subscriptions get it automatically; with an API key set `"promptCacheTtl": "1h"` in settings or `CLAUDE_CODE_PROMPT_CACHE_TTL=1h`. If you go over plan limits into usage credits, Claude Code falls back to 5m unless you set it explicitly.
 2. **Leave the interval on `auto`.** Shorter than needed just wastes reads; longer than the TTL does nothing.
-3. **Set the idle cap from break-even.** Pings stop paying off once you've spent more on them than the rebuild would cost: about 19 pings (~16 h) on a 1h cache, about 11 pings (~45 min) on a 5m cache. On Fable 5.1 reads are 4x cheaper, so break-even is ~4x later. The default of 3 h is conservative; the dashboard's "Recent cold rebuilds" table shows what your real pauses look like.
+3. **Decide who gets warmed.** The default only covers sessions waiting on background work, where you are certain to come back. `ccw when always` extends it to every idle session; check the dashboard's cold-rebuild table first to see whether your pauses justify it.
+4. **Set the idle cap from break-even.** Pings stop paying off once you've spent more on them than the rebuild would cost: about 19 pings (~16 h) on a 1h cache, about 11 pings (~45 min) on a 5m cache. On Fable 5.1 reads are 4x cheaper, so break-even is ~4x later. The default of 3 h is conservative; the dashboard's "Recent cold rebuilds" table shows what your real pauses look like.
 
 ## Costs and caveats
 
@@ -124,7 +133,7 @@ npm install
 npm run dev              # or: npm run build
 ```
 
-See [desktop/README.md](desktop/README.md). It is a thin shell: tray toggle + interval menu, starts the dashboard server if it isn't running, and shows the dashboard in a window.
+See [desktop/README.md](desktop/README.md). It is a thin shell: global hotkeys (Claude Code's own keybindings cannot run plugin commands, so these are OS-level), tray toggle + interval menu, starts the dashboard server if it isn't running, and shows the dashboard in a window.
 
 ## Development
 

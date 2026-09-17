@@ -16,6 +16,7 @@ export const DEFAULT_CONFIG = Object.freeze({
   intervalMinutes: 'auto',
   maxIdleMinutes: 180,
   minContextTokens: 20000,
+  warmWhen: 'background-work',
   engine: 'monitor',
   dashboardPort: 4777,
 });
@@ -145,6 +146,10 @@ export function validateConfigPatch(patch) {
         if (Number.isFinite(+value) && +value >= 0) out.minContextTokens = +value;
         else errors.push('minContextTokens must be a number >= 0');
         break;
+      case 'warmWhen':
+        if (value === 'background-work' || value === 'always') out.warmWhen = value;
+        else errors.push('warmWhen must be "background-work" or "always"');
+        break;
       case 'engine':
         if (value === 'monitor' || value === 'cron') out.engine = value;
         else errors.push('engine must be "monitor" or "cron"');
@@ -199,6 +204,63 @@ export function updateSession(id, patch) {
   return next;
 }
 
+// Per-session overrides. `null` clears one, i.e. "follow the global setting again".
+const SESSION_OVERRIDE_KEYS = ['intervalMinutes', 'maxIdleMinutes', 'warmWhen'];
+
+export function setSessionOverrides(id, patch) {
+  const session = loadSession(id);
+  if (!session) throw new Error(`unknown session: ${id}`);
+  const next = { enabled: session.enabled ?? null, overrides: { ...(session.overrides || {}) } };
+  const toValidate = {};
+  for (const [key, value] of Object.entries(patch || {})) {
+    if (key === 'enabled') {
+      if (![true, false, null].includes(value)) throw new Error('enabled must be true, false or null');
+      next.enabled = value;
+    } else if (!SESSION_OVERRIDE_KEYS.includes(key)) throw new Error(`"${key}" cannot be set per session`);
+    else if (value === null) delete next.overrides[key];
+    else toValidate[key] = value;
+  }
+  const { patch: clean, errors } = validateConfigPatch(toValidate);
+  if (errors.length) throw new Error(errors.join('; '));
+  Object.assign(next.overrides, clean);
+  logEvent({ type: 'config', sessionId: id, patch });
+  return updateSession(id, next);
+}
+
+// Background work (running subagents, background shell commands): one marker file
+// each, so concurrent hooks never race on a shared file.
+// Subagents are removed on SubagentStop. Claude Code has no hook for a background
+// shell finishing, so those markers simply age out.
+const STALE_MS = { agent: 12 * 3600_000, shell: 2 * 3600_000 };
+
+function agentsDir(id) {
+  sessionPath(id); // validates the id
+  return path.join(SESSIONS_DIR, `${id}.agents`);
+}
+
+export function markAgent(id, agentId, info) {
+  const file = path.join(agentsDir(id), `${String(agentId).replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 128)}.json`);
+  if (info) writeJsonAtomic(file, info);
+  else fs.rmSync(file, { force: true });
+}
+
+export function clearAgents(id) {
+  fs.rmSync(agentsDir(id), { recursive: true, force: true });
+}
+
+export function activeAgents(id, now = Date.now()) {
+  let names;
+  try {
+    names = fs.readdirSync(agentsDir(id));
+  } catch {
+    return [];
+  }
+  return names
+    .filter((n) => n.endsWith('.json'))
+    .map((n) => readJson(path.join(agentsDir(id), n)))
+    .filter((a) => a && now - (a.startedAt || 0) < (STALE_MS[a.kind] || STALE_MS.agent));
+}
+
 export function loadMonitorState(id) {
   return readJson(sessionPath(id, 'monitor'), null) || { pingTimes: [] };
 }
@@ -239,19 +301,12 @@ export function pruneSessions(now = Date.now()) {
     if (dead && now - last > WEEK) {
       fs.rmSync(sessionPath(s.sessionId), { force: true });
       fs.rmSync(sessionPath(s.sessionId, 'monitor'), { force: true });
+      clearAgents(s.sessionId);
     }
   }
 }
 
 // --------------------------------------------------------------- transcripts
-
-function mtimeMs(file) {
-  try {
-    return fs.statSync(file).mtimeMs;
-  } catch {
-    return 0;
-  }
-}
 
 /**
  * Read the tail of a transcript and return the latest main-conversation usage:
@@ -333,17 +388,23 @@ export function resolveIntervalMinutes(config, ttl) {
  * Single source of truth for "should this session be pinged, and when".
  * The monitor acts on it; the CLI and dashboard only display it.
  */
-export function computeStatus({ config, session, monitor, usage, now = Date.now(), env = process.env }) {
+export function computeStatus({ config: globalConfig, session, monitor, usage, agents = [], now = Date.now(), env = process.env }) {
+  const overrides = session.overrides || {};
+  const config = { ...globalConfig, ...overrides };
   const ttl = resolveTtl(usage, env);
   const intervalMinutes = resolveIntervalMinutes(config, ttl);
   const intervalMs = intervalMinutes * 60_000;
   const pingTimes = monitor?.pingTimes || [];
   const lastPingAt = pingTimes.length ? pingTimes[pingTimes.length - 1] : 0;
 
-  // When the human (or real work) last touched the session. Pings don't count.
-  const lastHumanAt = Math.max(session.lastUserActivityAt || 0, session.lastWorkStopAt || 0, session.startedAt || 0);
-  // When the cache was last refreshed by anything, pings included.
-  const lastRequestAt = Math.max(lastHumanAt, lastPingAt, session.lastStopAt || 0, mtimeMs(session.transcriptPath));
+  // When the human (or real work) last touched the session. Pings don't count;
+  // launching background work does.
+  const lastHumanAt = Math.max(session.lastUserActivityAt || 0, session.lastWorkStopAt || 0, session.startedAt || 0, ...agents.map((a) => a.startedAt || 0));
+  // When the main conversation's cache was last refreshed by anything, pings included.
+  // Deliberately not the transcript's mtime: subagent and tool output can touch the file
+  // without the main conversation sending a request.
+  // Launching an agent or resuming a session is not a request, so lastHumanAt stays out of it.
+  const lastRequestAt = Math.max(session.lastUserActivityAt || 0, session.lastStopAt || 0, lastPingAt, usage?.timestamp || 0);
 
   const base = {
     ttl,
@@ -356,14 +417,23 @@ export function computeStatus({ config, session, monitor, usage, now = Date.now(
     model: usage?.model || null,
     contextTokens: usage?.contextTokens || 0,
     nextPingAt: null,
+    overrides,
+    warmWhen: config.warmWhen,
+    agentsRunning: agents.length,
+    agentTypes: [...new Set(agents.map((a) => a.type).filter(Boolean))],
     warning: intervalMinutes >= TTL_MINUTES[ttl] ? `interval ${intervalMinutes}m is not shorter than the ${ttl} cache TTL` : null,
     ...estimateCosts(usage?.model, usage?.contextTokens, ttl),
   };
 
+  // Default policy: only warm a session that is waiting on background work. Its result
+  // lands in this conversation, so you are certainly coming back, and meanwhile the main
+  // conversation sends nothing that would refresh its own cache.
   const enabled = session.enabled ?? config.enabled;
+  base.reason = agents.length ? 'background-work' : 'idle';
   let status;
   if (session.endedAt) status = 'ended';
   else if (!enabled) status = 'off';
+  else if (config.warmWhen === 'background-work' && !agents.length) status = 'no-work';
   else if (base.contextTokens < config.minContextTokens) status = 'small-context';
   else if (config.maxIdleMinutes > 0 && now - lastHumanAt > config.maxIdleMinutes * 60_000) status = 'idle-cap';
   else if (now - lastRequestAt > TTL_MINUTES[ttl] * 60_000) status = 'expired'; // cache already gone; a ping would be a full-price rewrite
@@ -380,7 +450,8 @@ export function sessionViews(now = Date.now(), thisSession = null) {
     .map((session) => {
       const monitor = loadMonitorState(session.sessionId);
       const usage = readLastUsage(session.transcriptPath);
-      const st = computeStatus({ config, session, monitor, usage, now });
+      const agents = activeAgents(session.sessionId, now);
+      const st = computeStatus({ config, session, monitor, usage, agents, now });
       // A crashed Claude never fires SessionEnd, so check the process too.
       const gone = !session.endedAt && session.claudePid && !pidAlive(session.claudePid);
       return {

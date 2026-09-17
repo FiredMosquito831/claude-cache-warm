@@ -24,7 +24,7 @@
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--page); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
-  main { max-width: 1120px; margin: 0 auto; padding: 24px 16px 64px; }
+  main { max-width: 1320px; margin: 0 auto; padding: 24px 16px 64px; }
   header { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
   h1 { font-size: 20px; margin: 0; font-weight: 650; }
   h2 { font-size: 14px; margin: 0 0 2px; font-weight: 650; }
@@ -48,9 +48,14 @@
   .switch input:checked + .track::after { transform: translateX(18px); }
   .switch input:focus-visible + .track { outline: 2px solid var(--series-1); outline-offset: 2px; }
 
-  form.settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px 16px; align-items: end; }
-  label.field { display: grid; gap: 4px; font-size: 13px; color: var(--ink-2); }
+  form.settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px 16px; align-items: end; }
+  label.field { display: grid; gap: 4px; font-size: 13px; color: var(--ink-2); min-width: 0; }
+  label.field select, label.field input { width: 100%; min-width: 0; }
   label.field small { color: var(--muted); }
+  #sessions td:first-child { min-width: 190px; }
+  td select, td input[type=number] { padding: 3px 6px; font-size: 12px; width: 128px; }
+  #sessions td, #sessions th { padding-left: 6px; padding-right: 6px; }
+  .tag { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 9px; border: 1px solid var(--axis); color: var(--ink-2); margin-left: 6px; white-space: nowrap; }
   input[type=number], select, button { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--axis); border-radius: 7px; padding: 6px 9px; }
   button { cursor: pointer; }
   button:hover { background: var(--wash); }
@@ -96,7 +101,7 @@
 
   <section class="card" style="margin-bottom:12px">
     <h2>Live sessions</h2>
-    <p class="sub">A ping is sent only when a session has been silent for one interval, so active sessions cost nothing extra.</p>
+    <p class="sub">A ping is sent only when a session has been silent for one interval, and, by default, only while it waits on a subagent or background task. The right-hand columns are per-session overrides; "Global" follows the settings below.</p>
     <div class="scroll"><table id="sessions"></table></div>
   </section>
 
@@ -113,6 +118,8 @@
       <label class="field">Skip sessions below (tokens) <input type="number" name="minContextTokens" min="0" step="1000"></label>
       <label class="field">Engine
         <select name="engine"><option value="monitor">Monitor (activity-aware)</option><option value="cron">Cron (in-session fallback)</option></select></label>
+      <label class="field">Warm a session
+        <select name="warmWhen"><option value="background-work">Only while a subagent or background task runs</option><option value="always">Whenever it is idle</option></select></label>
       <button class="primary" type="submit">Save</button>
     </form>
   </section>
@@ -229,25 +236,43 @@ function renderSessions() {
   const rows = state.sessions.filter((s) => s.status !== 'ended');
   const table = $('#sessions');
   if (!rows.length) return table.replaceChildren(el('tr', {}, el('td', { className: 'empty', textContent: 'No live sessions yet. A session registers on its first prompt after the plugin is enabled.' })));
-  const LABEL = { warming: 'Warming', off: 'Off', 'small-context': 'Context too small', 'idle-cap': 'Idle cap reached', expired: 'Cache already expired' };
-  const head = el('tr', {}, ...['Session', 'Status', 'Next ping', 'Context', 'TTL / every', 'Idle', 'Pings', 'Per ping', 'Cold return', ''].map((h, i) => el('th', { textContent: h, className: i >= 3 && i <= 8 ? 'num' : '' })));
+  const LABEL = { warming: 'Warming', off: 'Off', 'no-work': 'Standing by (no background work)', 'small-context': 'Context too small', 'idle-cap': 'Idle cap reached', expired: 'Cache already expired' };
+  const head = el('tr', {}, ...['Session', 'Status', 'Next ping', 'Context', 'TTL', 'Idle', 'Pings', 'Per ping', 'Cold return', 'Warm when', 'Interval', 'Idle cap (min)', ''].map((h, i) => el('th', { textContent: h, className: i >= 3 && i <= 8 ? 'num' : '' })));
+  // Rebuilding the table every second would close an open dropdown, so hold still while one has focus.
+  if (table.contains(document.activeElement) && ['SELECT', 'INPUT'].includes(document.activeElement.tagName)) return;
+  const setOverride = async (id, patch) => { try { await post('/api/sessions/' + id, patch); toast('Saved for this session'); } catch (e) { toast(e.message); } document.activeElement?.blur(); refreshState(); };
   table.replaceChildren(head, ...rows.map((s) => {
     const noMon = !s.monitorAlive && state.config.engine === 'monitor';
     const status = el('span', { className: 'pill' }, el('span', { className: 'dot ' + (noMon ? 'nomonitor' : s.status) }), noMon ? 'No monitor running' : LABEL[s.status] || s.status);
     const effective = s.enabled ?? state.config.enabled;
-    const btn = el('button', { textContent: effective ? 'Pause' : 'Resume', onclick: async () => { await post('/api/sessions/' + s.sessionId, { enabled: !effective }); refreshState(); } });
-    const follow = s.enabled === null || s.enabled === undefined ? '' : el('button', { textContent: 'Follow global', style: 'margin-left:6px', onclick: async () => { await post('/api/sessions/' + s.sessionId, { enabled: null }); refreshState(); } });
+    const btn = el('button', { textContent: effective ? 'Pause' : 'Resume', onclick: () => setOverride(s.sessionId, { enabled: !effective }) });
+    const ov = s.overrides || {};
+    const hasOverride = (s.enabled !== null && s.enabled !== undefined) || Object.keys(ov).length > 0;
+    const follow = !hasOverride ? '' : el('button', { textContent: 'Reset', title: 'Drop all overrides for this session', style: 'margin-left:6px', onclick: () => setOverride(s.sessionId, { enabled: null, intervalMinutes: null, maxIdleMinutes: null, warmWhen: null }) });
+    const whenSel = el('select', { ariaLabel: 'When to warm this session', onchange: (e) => setOverride(s.sessionId, { warmWhen: e.target.value || null }) },
+      ...[['', `Global (${state.config.warmWhen === 'always' ? 'idle' : 'bg work'})`], ['background-work', 'Background work'], ['always', 'Whenever idle']].map(([v, t]) => el('option', { value: v, textContent: t })));
+    whenSel.value = ov.warmWhen || '';
+    const intervalSel = el('select', { ariaLabel: 'Interval for this session', onchange: (e) => setOverride(s.sessionId, { intervalMinutes: e.target.value === '' ? null : e.target.value === 'auto' ? 'auto' : Number(e.target.value) }) },
+      ...[['', `Global (${state.config.intervalMinutes === 'auto' ? 'auto' : state.config.intervalMinutes + ' min'})`], ['auto', 'Auto'], ...[4, 10, 15, 20, 30, 45, 50, 55].map((n) => [String(n), n + ' min'])].map(([v, t]) => el('option', { value: v, textContent: t })));
+    intervalSel.value = ov.intervalMinutes == null ? '' : String(ov.intervalMinutes);
+    if (intervalSel.value !== (ov.intervalMinutes == null ? '' : String(ov.intervalMinutes))) { intervalSel.append(el('option', { value: String(ov.intervalMinutes), textContent: ov.intervalMinutes + ' min' })); intervalSel.value = String(ov.intervalMinutes); }
+    const idleInput = el('input', { type: 'number', min: 0, step: 10, ariaLabel: 'Idle cap for this session', placeholder: `Global (${state.config.maxIdleMinutes})`, value: ov.maxIdleMinutes ?? '',
+      onchange: (e) => setOverride(s.sessionId, { maxIdleMinutes: e.target.value === '' ? null : Number(e.target.value) }) });
+    const agentTag = s.agentsRunning ? el('span', { className: 'tag', title: (s.agentTypes || []).join(', '), textContent: `${s.agentsRunning} background job${s.agentsRunning > 1 ? 's' : ''}` }) : '';
     return el('tr', {},
       el('td', {}, el('div', { textContent: s.sessionId.slice(0, 8) + (s.model ? '  ·  ' + s.model.replace('claude-', '') : '') }), el('div', { className: 'path', textContent: s.cwd || '' })),
-      el('td', {}, status, s.warning ? el('div', { className: 'path', textContent: s.warning }) : ''),
+      el('td', {}, status, agentTag, s.warning ? el('div', { className: 'path', textContent: s.warning }) : ''),
       el('td', { textContent: s.nextPingAt ? fmtDur(s.nextPingAt - now) : '-' }),
       el('td', { className: 'num', textContent: fmtTok(s.contextTokens) }),
-      el('td', { className: 'num', textContent: `${s.ttl} / ${s.intervalMinutes}m` }),
+      el('td', { className: 'num', textContent: s.ttl }),
       el('td', { className: 'num', textContent: fmtDur(now - s.lastHumanAt) }),
       el('td', { className: 'num', textContent: `${s.pingsSinceUser} (${s.pingsTotal} total)` }),
       el('td', { className: 'num', textContent: fmtUsd(s.pingUsd) }),
       el('td', { className: 'num', textContent: fmtUsd(s.rebuildUsd) }),
-      el('td', {}, btn, follow));
+      el('td', {}, whenSel),
+      el('td', {}, intervalSel),
+      el('td', {}, idleInput),
+      el('td', { style: 'white-space:nowrap' }, btn, follow));
   }));
 }
 
@@ -259,6 +284,7 @@ function renderConfig() {
   if (![...sel.options].some((o) => o.value === String(c.intervalMinutes))) sel.append(el('option', { textContent: String(c.intervalMinutes) }));
   sel.value = String(c.intervalMinutes);
   f.maxIdleMinutes.value = c.maxIdleMinutes; f.minContextTokens.value = c.minContextTokens; f.engine.value = c.engine;
+  f.warmWhen.value = c.warmWhen;
 }
 
 function renderAnalytics(a) {
@@ -320,7 +346,7 @@ $('#master').addEventListener('change', async (e) => { await post('/api/config',
 $('#settings').addEventListener('submit', async (e) => {
   e.preventDefault(); const f = e.target;
   try {
-    await post('/api/config', { intervalMinutes: f.intervalMinutes.value === 'auto' ? 'auto' : Number(f.intervalMinutes.value), maxIdleMinutes: Number(f.maxIdleMinutes.value), minContextTokens: Number(f.minContextTokens.value), engine: f.engine.value });
+    await post('/api/config', { intervalMinutes: f.intervalMinutes.value === 'auto' ? 'auto' : Number(f.intervalMinutes.value), maxIdleMinutes: Number(f.maxIdleMinutes.value), minContextTokens: Number(f.minContextTokens.value), engine: f.engine.value, warmWhen: f.warmWhen.value });
     document.activeElement.blur(); toast('Saved'); refreshState(); refreshAnalytics();
   } catch (err) { toast(err.message); }
 });

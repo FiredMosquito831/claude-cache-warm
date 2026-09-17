@@ -53,7 +53,8 @@ const sessionFile = path.join(home, 'sessions', 'sess-1.json');
 function setIdle(idleMin) {
   const t = Date.now() - idleMin * 60_000;
   fs.writeFileSync(sessionFile, JSON.stringify({ ...readJson(sessionFile), startedAt: t, lastUserActivityAt: t, lastStopAt: t, lastWorkStopAt: t }));
-  fs.utimesSync(transcript, new Date(t), new Date(t));
+  // The last main-conversation response is what dates the cache, not the file's mtime.
+  fs.writeFileSync(transcript, usageLine(t, { write: 80_000, id: 'm1' }));
   fs.rmSync(path.join(home, 'sessions', 'sess-1.monitor.json'), { force: true });
 }
 
@@ -75,6 +76,8 @@ test.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
 test('hooks register the session and seed config', () => {
   assert.equal(hook('SessionStart', { source: 'startup' }).status, 0);
+  assert.equal(JSON.parse(ccw('status', '--json').stdout).config.warmWhen, 'background-work', 'default policy');
+  ccw('when', 'always'); // the next tests exercise the timer itself; the default policy has its own test
   hook('UserPromptSubmit');
   hook('Stop');
   const s = readJson(sessionFile);
@@ -129,6 +132,54 @@ test('off switch, idle cap, expired cache and per-session pause all stop pings',
   assert.equal((await runMonitor(800)).length, 1);
 });
 
+test('default policy: an idle session is warmed only while background work is running', async () => {
+  const status = () => JSON.parse(ccw('status', '--json').stdout).sessions[0];
+  const agentsDir = path.join(home, 'sessions', 'sess-1.agents');
+  ccw('when', 'background-work');
+  setIdle(51);
+  assert.equal(status().status, 'no-work');
+  assert.deepEqual(await runMonitor(500), [], 'idle but nothing running: no ping');
+
+  hook('SubagentStart', { agent_id: 'agent-1', agent_type: 'Explore' });
+  hook('PostToolUse', { tool_name: 'Bash', tool_use_id: 'tu1', tool_input: { command: 'npm run build', run_in_background: true } });
+  hook('PostToolUse', { tool_name: 'Bash', tool_use_id: 'tu2', tool_input: { command: 'ls' } });
+  assert.equal(status().agentsRunning, 2, 'subagent + background shell; a foreground command is not work');
+  assert.equal(status().status, 'warming');
+  assert.equal((await runMonitor(800)).length, 1);
+
+  setIdle(51);
+  ccw('off', '--session');
+  assert.deepEqual(await runMonitor(500), [], 'per-session pause wins');
+  ccw('follow');
+
+  hook('SubagentStop', { agent_id: 'agent-1' });
+  assert.equal(status().agentsRunning, 1);
+  fs.rmSync(agentsDir, { recursive: true });
+  assert.equal(status().status, 'no-work');
+  assert.deepEqual(await runMonitor(500), [], 'work finished: stand by again');
+
+  // one session can opt in to always-warm without touching the global default
+  assert.equal(ccw('when', 'always', '--session').status, 0);
+  assert.equal((await runMonitor(800)).length, 1);
+  ccw('follow');
+  ccw('when', 'always');
+});
+
+test('per-session overrides beat the global settings and can be cleared', async () => {
+  setIdle(20);
+  assert.deepEqual(await runMonitor(500), [], '20 min idle < 50 min auto interval');
+  assert.equal(ccw('interval', '15', '--session=sess').status, 0);
+  const st = JSON.parse(ccw('status', '--json').stdout).sessions[0];
+  assert.equal(st.intervalMinutes, 15);
+  assert.deepEqual(st.overrides, { intervalMinutes: 15 });
+  assert.equal((await runMonitor(800)).length, 1);
+
+  assert.notEqual(ccw('set', 'engine', 'cron', '--session').status, 0, 'engine is global only');
+  ccw('follow');
+  assert.deepEqual(JSON.parse(ccw('status', '--json').stdout).sessions[0].overrides, {});
+  assert.equal(readJson(path.join(home, 'config.json')).intervalMinutes, 'auto', 'global untouched');
+});
+
 test('config validation rejects nonsense', () => {
   assert.notEqual(ccw('interval', '90').status, 0);
   assert.notEqual(ccw('set', 'engine', 'magic').status, 0);
@@ -156,4 +207,39 @@ test('analytics dedupes repeated usage lines, finds a cold rebuild, and parses i
 
   fs.appendFileSync(transcript, usageLine(Date.now(), { read: 101_000, write: 200, id: 'd' }));
   assert.equal((await computeAnalytics({ days: 1 })).totals.requests, 4);
+});
+
+test('status line wraps an existing one, appends the segment, and uninstalls cleanly', () => {
+  const settings = path.join(tmp, 'settings.json');
+  const original = { model: 'x', statusLine: { type: 'command', command: 'echo THEIRS', padding: 1 } };
+  fs.writeFileSync(settings, JSON.stringify(original));
+
+  assert.equal(ccw('statusline', 'install', `--file=${settings}`).status, 0);
+  assert.equal(ccw('statusline', 'install', `--file=${settings}`).status, 0, 'installing twice must not wrap itself');
+  const installed = readJson(settings);
+  assert.match(installed.statusLine.command, /statusline-launcher\.mjs/);
+  assert.equal(installed.statusLine.padding, 1);
+  assert.equal(installed.model, 'x');
+
+  const input = JSON.stringify({
+    session_id: 'sess-1',
+    model: { id: 'claude-opus-5' },
+    context_window: { total_input_tokens: 200_000, current_usage: { cache_read_input_tokens: 190_000 } },
+    prompt_cache: { warm: true, caching_observed: true, ttl: '1h', expires_at: Math.floor(Date.now() / 1000) + 1800 },
+  });
+  const run = () => spawnSync(process.execPath, [path.join(home, 'statusline-launcher.mjs')], { env: { ...env, NO_COLOR: '1' }, input, encoding: 'utf8' }).stdout;
+  const line = run();
+  assert.match(line, /^THEIRS │ /, 'their output first, untouched');
+  assert.match(line, /ctx 200\.0k, cached 190\.0k \(95%\)/);
+  assert.match(line, /1h cache, (29|30)m \d\ds left/);
+  assert.match(line, /warm (on|standby|off|paused)/);
+
+  // a missing plugin must degrade to the user's own status line, not to a blank one
+  const state = path.join(home, 'statusline.json');
+  fs.writeFileSync(state, JSON.stringify({ ...readJson(state), pluginRoot: path.join(tmp, 'gone') }));
+  assert.equal(run().trim(), 'THEIRS');
+
+  assert.equal(ccw('statusline', 'uninstall').status, 0);
+  assert.deepEqual(readJson(settings), original);
+  assert.ok(!fs.existsSync(path.join(home, 'statusline-launcher.mjs')));
 });

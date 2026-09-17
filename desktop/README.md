@@ -4,9 +4,14 @@ A thin [Tauri v2](https://v2.tauri.app) tray app. The dashboard
 (`node dashboard/server.mjs`) is the real UI; this app only:
 
 - shows a tray icon with **Open dashboard**, **Warming enabled** (check),
-  **Interval** (Auto / 4 / 15 / 30 / 50 min) and **Quit**;
-- edits `enabled` and `intervalMinutes` in `config.json` (atomic temp-file + rename,
-  other keys preserved, created with contract defaults if missing);
+  **Warm only during background work** (check), **Interval**
+  (Auto / 4 / 15 / 30 / 50 min), the active hotkeys (info lines) and **Quit**;
+- edits `enabled`, `warmWhen` and `intervalMinutes` in `config.json` (atomic temp-file +
+  rename, other keys preserved, created with contract defaults if missing).
+  `warmWhen` is `"background-work"` (checked, also when the key is absent) or `"always"`;
+- registers system-wide hotkeys (see [Hotkeys](#hotkeys)) and shows the state in the
+  tray tooltip: `Claude Cache Warm — warming ON/OFF` (kept in sync with external edits
+  through the 3 s config poll);
 - starts the dashboard server if `GET /api/health` doesn't answer, and kills it on
   quit only if it spawned it;
 - shows the dashboard in a window (closing it hides to tray), single instance.
@@ -39,6 +44,35 @@ so installers ship the server. It is kept out of the base `tauri.conf.json` beca
 Tauri validates resource paths at compile time, which would break `cargo check` /
 `tauri dev` whenever `dashboard/` is absent. Installers land in
 `src-tauri/target/release/bundle/`.
+
+## Hotkeys
+
+| Default | Action |
+| :--- | :--- |
+| `Ctrl+Alt+W` | Toggle `enabled` in `config.json` (same code path as the tray check item). Updates the tooltip and shows a native notification "Cache warming ON" / "OFF". |
+| `Ctrl+Alt+D` | Show / focus the dashboard window (same as **Open dashboard**). |
+
+Override them in `<state dir>/desktop.json` (`~/.claude-cache-warm/desktop.json`, or
+under `CCW_HOME`). The file is optional and never created by the app; it is read once
+at startup, so restart the app after editing it.
+
+```json
+{ "toggleHotkey": "Ctrl+Alt+W", "dashboardHotkey": "Ctrl+Alt+D" }
+```
+
+- Missing file or missing key → the default. `""` or `null` → that hotkey is disabled
+  (no tray line).
+- Format: modifiers (`Ctrl`/`Control`, `Alt`/`Option`, `Shift`, `Super`/`Cmd`,
+  `CmdOrCtrl`) plus one key, joined with `+`, e.g. `Ctrl+Shift+F9`.
+- The tray menu lists what is active as disabled info items (`Toggle: Ctrl+Alt+W`,
+  `Dashboard: Ctrl+Alt+D`). A shortcut that cannot be parsed or is already taken by
+  another app never crashes the app: the reason goes to stderr and the tray shows
+  `Hotkey Ctrl+Alt+W unavailable`.
+- Notifications on Windows show the proper app name/icon only for an installed build;
+  in `tauri dev` they are attributed to PowerShell. A failed notification is only logged.
+
+The plugins (`tauri-plugin-global-shortcut`, `tauri-plugin-notification`) are used
+from Rust only, so `capabilities/default.json` grants the webview no extra permissions.
 
 ## Environment variables
 

@@ -3,15 +3,18 @@
 // session went idle. Must never block or fail the user's turn: always exit 0.
 import {
   CONFIG_PATH,
+  clearAgents,
   ensureHome,
   loadMonitorState,
   loadSession,
   logEvent,
+  markAgent,
   pruneSessions,
   readJson,
   saveConfig,
   updateSession,
 } from './lib.mjs';
+import { refreshPluginRoot } from './statusline-install.mjs';
 
 function readStdin() {
   return new Promise((resolve) => {
@@ -56,7 +59,10 @@ async function main() {
   switch (input.hook_event_name) {
     case 'SessionStart':
       seedConfigFromPluginOptions();
+      refreshPluginRoot(); // plugin updates move the install dir; keep the status line launcher pointed at it
       pruneSessions(now);
+      // No agent survives a restart. /clear, /compact and resume keep the process, and its agents, alive.
+      if (input.source === 'startup') clearAgents(id);
       updateSession(id, { ...common, startedAt: loadSession(id)?.startedAt || now, endedAt: 0, source: input.source });
       logEvent({ type: 'session_start', sessionId: id, source: input.source, cwd: input.cwd });
       break;
@@ -76,8 +82,25 @@ async function main() {
       break;
     }
 
+    case 'SubagentStart':
+      if (input.agent_id) markAgent(id, input.agent_id, { kind: 'agent', agentId: input.agent_id, type: input.agent_type || null, startedAt: now });
+      break;
+
+    case 'SubagentStop':
+      if (input.agent_id) markAgent(id, input.agent_id, null);
+      break;
+
+    case 'PostToolUse':
+      // A shell command sent to the background keeps working after the turn ends.
+      if (input.tool_input?.run_in_background === true) {
+        const shellId = `shell-${input.tool_use_id || now}`;
+        markAgent(id, shellId, { kind: 'shell', agentId: shellId, type: `background ${input.tool_name}`, startedAt: now });
+      }
+      break;
+
     case 'SessionEnd':
       updateSession(id, { ...common, endedAt: now, endReason: input.reason });
+      if (input.reason !== 'clear') clearAgents(id);
       logEvent({ type: 'session_end', sessionId: id, reason: input.reason });
       break;
   }

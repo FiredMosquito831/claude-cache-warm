@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { VERSION, loadConfig, loadSession, logEvent, resolveIntervalMinutes, saveConfig, sessionViews, updateSession } from '../scripts/lib.mjs';
+import { VERSION, loadConfig, loadSession, resolveIntervalMinutes, saveConfig, sessionViews, setSessionOverrides } from '../scripts/lib.mjs';
 import { computeAnalytics } from './analytics.mjs';
 
 const PUBLIC = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
@@ -84,12 +84,14 @@ const server = http.createServer(async (req, res) => {
     const m = url.pathname.match(/^\/api\/sessions\/([A-Za-z0-9_-]{1,128})$/);
     if (req.method === 'POST' && m) {
       if (!writeAllowed(req)) return send(res, 403, { error: 'forbidden' });
-      const { enabled } = await readBody(req).catch(() => ({}));
-      if (![true, false, null].includes(enabled)) return send(res, 400, { error: 'enabled must be true, false or null' });
       if (!loadSession(m[1])) return send(res, 404, { error: 'unknown session' });
-      updateSession(m[1], { enabled });
-      logEvent({ type: 'config', sessionId: m[1], patch: { enabled } });
-      return send(res, 200, { ok: true });
+      try {
+        // { enabled, intervalMinutes, maxIdleMinutes }; null clears an override.
+        setSessionOverrides(m[1], await readBody(req));
+        return send(res, 200, { ok: true });
+      } catch (err) {
+        return send(res, 400, { error: err.message });
+      }
     }
 
     if (req.method === 'GET') {

@@ -5,6 +5,7 @@
 // goes to events.jsonl.
 import {
   PING_TEXT,
+  activeAgents,
   computeStatus,
   ensureHome,
   listSessions,
@@ -57,7 +58,7 @@ function tick() {
   const config = loadConfig();
   const monitor = loadMonitorState(id);
   const usage = readLastUsage(session.transcriptPath);
-  const st = computeStatus({ config, session, monitor, usage, now });
+  const st = computeStatus({ config, session, monitor, usage, agents: activeAgents(id, now), now });
 
   monitor.monitorPid = process.pid;
   monitor.heartbeatAt = now;
@@ -77,6 +78,8 @@ function tick() {
       engine: 'monitor',
       ttl: st.ttl,
       intervalMinutes: st.intervalMinutes,
+      reason: st.reason,
+      agentsRunning: st.agentsRunning,
       idleMs: now - st.lastHumanAt,
       contextTokens: st.contextTokens,
       model: st.model,

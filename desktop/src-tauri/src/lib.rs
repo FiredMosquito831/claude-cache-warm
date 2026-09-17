@@ -22,12 +22,20 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Manager, RunEvent, WindowEvent, Wry,
 };
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
+use tauri_plugin_notification::NotificationExt;
 
 const MAIN_WINDOW: &str = "main";
 const DEFAULT_PORT: u16 = 4777;
 const ID_OPEN: &str = "open";
 const ID_ENABLED: &str = "enabled";
 const ID_QUIT: &str = "quit";
+const ID_WARM_WHEN: &str = "warm-when";
+const TRAY_ID: &str = "main";
+const DEFAULT_TOGGLE_HOTKEY: &str = "Ctrl+Alt+W";
+const DEFAULT_DASHBOARD_HOTKEY: &str = "Ctrl+Alt+D";
+const WARM_BACKGROUND: &str = "background-work";
+const WARM_ALWAYS: &str = "always";
 const INTERVAL_PREFIX: &str = "interval:";
 /// (menu id suffix / config value, label). "auto" is written as a string, the rest as numbers.
 const INTERVALS: &[(&str, &str)] = &[
@@ -147,6 +155,98 @@ fn interval_key(cfg: &Map<String, Value>) -> String {
     }
 }
 
+fn is_enabled(cfg: &Map<String, Value>) -> bool {
+    cfg.get("enabled").and_then(Value::as_bool).unwrap_or(true)
+}
+
+/// `warmWhen`: anything but `"always"` (including an absent key) means "background-work".
+fn warm_only_background(cfg: &Map<String, Value>) -> bool {
+    cfg.get("warmWhen").and_then(Value::as_str) != Some(WARM_ALWAYS)
+}
+
+fn tooltip_text(enabled: bool) -> String {
+    format!(
+        "Claude Cache Warm \u{2014} warming {}",
+        if enabled { "ON" } else { "OFF" }
+    )
+}
+
+// ---------------------------------------------------------------------------
+// desktop.json (hotkeys)
+// ---------------------------------------------------------------------------
+
+/// Accelerator strings; `None` = that hotkey is disabled.
+struct HotkeyConfig {
+    toggle: Option<String>,
+    dashboard: Option<String>,
+}
+
+/// Reads `<state dir>/desktop.json`. A missing file means defaults (it is never created).
+fn load_hotkey_config() -> HotkeyConfig {
+    let path = state_dir().join("desktop.json");
+    let map = match fs::read_to_string(&path) {
+        Err(_) => Map::new(),
+        Ok(text) => match serde_json::from_str::<Value>(text.trim_start_matches('\u{feff}')) {
+            Ok(Value::Object(map)) => map,
+            _ => {
+                eprintln!(
+                    "[ccw] {} is not a JSON object; using default hotkeys",
+                    path.display()
+                );
+                Map::new()
+            }
+        },
+    };
+    let pick = |key: &str, default: &str| match map.get(key) {
+        None => Some(default.to_string()),
+        Some(Value::Null) => None,
+        Some(Value::String(s)) => Some(s.trim().to_string()).filter(|s| !s.is_empty()),
+        Some(other) => {
+            eprintln!(
+                "[ccw] desktop.json: {key} must be a string or null, got {other}; using {default}"
+            );
+            Some(default.to_string())
+        }
+    };
+    HotkeyConfig {
+        toggle: pick("toggleHotkey", DEFAULT_TOGGLE_HOTKEY),
+        dashboard: pick("dashboardHotkey", DEFAULT_DASHBOARD_HOTKEY),
+    }
+}
+
+/// Registers one global hotkey and returns the tray info line describing the outcome
+/// (`None` when disabled). Parse and registration failures are logged, never fatal.
+fn register_hotkey(
+    app: &AppHandle,
+    label: &str,
+    accelerator: Option<&str>,
+    action: fn(&AppHandle),
+) -> Option<String> {
+    let accelerator = accelerator?;
+    let unavailable = format!("Hotkey {accelerator} unavailable");
+    let shortcut = match accelerator.parse::<Shortcut>() {
+        Ok(shortcut) => shortcut,
+        Err(err) => {
+            eprintln!("[ccw] cannot parse {label} hotkey {accelerator:?}: {err}");
+            return Some(unavailable);
+        }
+    };
+    let result = app
+        .global_shortcut()
+        .on_shortcut(shortcut, move |app, _shortcut, event| {
+            if event.state() == ShortcutState::Pressed {
+                action(app);
+            }
+        });
+    match result {
+        Ok(()) => Some(format!("{label}: {accelerator}")),
+        Err(err) => {
+            eprintln!("[ccw] cannot register {label} hotkey {accelerator:?}: {err}");
+            Some(unavailable)
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Dashboard server
 // ---------------------------------------------------------------------------
@@ -233,6 +333,7 @@ struct AppState {
     /// The server process, only when *we* spawned it.
     server: Mutex<Option<Child>>,
     enabled_item: CheckMenuItem<Wry>,
+    warm_when_item: CheckMenuItem<Wry>,
     interval_items: Vec<(&'static str, CheckMenuItem<Wry>)>,
 }
 
@@ -311,15 +412,45 @@ fn open_dashboard(app: &AppHandle) {
     });
 }
 
-/// Mirrors config.json into the tray check items.
+/// Mirrors config.json into the tray check items and the tray tooltip.
 fn sync_menu(app: &AppHandle) {
     let cfg = load_config();
     let state = app.state::<AppState>();
-    let enabled = cfg.get("enabled").and_then(Value::as_bool).unwrap_or(true);
+    let enabled = is_enabled(&cfg);
     let _ = state.enabled_item.set_checked(enabled);
+    let _ = state.warm_when_item.set_checked(warm_only_background(&cfg));
+    if let Some(tray) = app.tray_by_id(TRAY_ID) {
+        let _ = tray.set_tooltip(Some(tooltip_text(enabled)));
+    }
     let current = interval_key(&cfg);
     for (key, item) in &state.interval_items {
         let _ = item.set_checked(*key == current);
+    }
+}
+
+/// Flips `enabled` and refreshes the tray. Returns the state now on disk.
+fn toggle_enabled(app: &AppHandle) -> bool {
+    patch_config("enabled", Value::Bool(!is_enabled(&load_config())));
+    sync_menu(app);
+    is_enabled(&load_config())
+}
+
+/// Hotkey variant: the tray menu is not visible, so also show a native notification.
+fn toggle_enabled_with_feedback(app: &AppHandle) {
+    let enabled = toggle_enabled(app);
+    let body = if enabled {
+        "Cache warming ON"
+    } else {
+        "Cache warming OFF"
+    };
+    let shown = app
+        .notification()
+        .builder()
+        .title("Claude Cache Warm")
+        .body(body)
+        .show();
+    if let Err(err) = shown {
+        eprintln!("[ccw] notification failed: {err}");
     }
 }
 
@@ -328,11 +459,15 @@ fn handle_menu_event(app: &AppHandle, id: &str) {
         ID_OPEN => open_dashboard(app),
         ID_QUIT => app.exit(0),
         ID_ENABLED => {
-            let enabled = load_config()
-                .get("enabled")
-                .and_then(Value::as_bool)
-                .unwrap_or(true);
-            patch_config("enabled", Value::Bool(!enabled));
+            toggle_enabled(app);
+        }
+        ID_WARM_WHEN => {
+            let next = if warm_only_background(&load_config()) {
+                WARM_ALWAYS
+            } else {
+                WARM_BACKGROUND
+            };
+            patch_config("warmWhen", json!(next));
             sync_menu(app);
         }
         other => {
@@ -349,13 +484,17 @@ fn handle_menu_event(app: &AppHandle, id: &str) {
     }
 }
 
-fn build_tray(app: &tauri::App) -> tauri::Result<()> {
+fn build_tray(app: &tauri::App, hotkey_lines: &[String]) -> tauri::Result<()> {
     let cfg = load_config();
 
     let open_item = MenuItem::with_id(app, ID_OPEN, "Open dashboard", true, None::<&str>)?;
     let enabled_item = CheckMenuItemBuilder::with_id(ID_ENABLED, "Warming enabled")
-        .checked(cfg.get("enabled").and_then(Value::as_bool).unwrap_or(true))
+        .checked(is_enabled(&cfg))
         .build(app)?;
+    let warm_when_item =
+        CheckMenuItemBuilder::with_id(ID_WARM_WHEN, "Warm only during background work")
+            .checked(warm_only_background(&cfg))
+            .build(app)?;
 
     let current = interval_key(&cfg);
     let mut interval_items = Vec::with_capacity(INTERVALS.len());
@@ -370,22 +509,31 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
     let interval_menu = interval_menu.build()?;
     let quit_item = MenuItem::with_id(app, ID_QUIT, "Quit", true, None::<&str>)?;
 
-    let menu = MenuBuilder::new(app)
+    let mut menu = MenuBuilder::new(app)
         .item(&open_item)
         .item(&enabled_item)
-        .item(&interval_menu)
-        .separator()
-        .item(&quit_item)
-        .build()?;
+        .item(&warm_when_item)
+        .item(&interval_menu);
+    if !hotkey_lines.is_empty() {
+        menu = menu.separator();
+        for (i, line) in hotkey_lines.iter().enumerate() {
+            // Disabled items: purely informational.
+            let info =
+                MenuItem::with_id(app, format!("hotkey-info:{i}"), line, false, None::<&str>)?;
+            menu = menu.item(&info);
+        }
+    }
+    let menu = menu.separator().item(&quit_item).build()?;
 
     app.manage(AppState {
         server: Mutex::new(None),
         enabled_item,
+        warm_when_item,
         interval_items,
     });
 
-    let mut tray = TrayIconBuilder::with_id("main")
-        .tooltip("Claude Cache Warm")
+    let mut tray = TrayIconBuilder::with_id(TRAY_ID)
+        .tooltip(tooltip_text(is_enabled(&cfg)))
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| handle_menu_event(app, event.id().as_ref()))
@@ -435,6 +583,8 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             open_dashboard(app);
         }))
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .invoke_handler(tauri::generate_handler![dashboard_status])
         .on_window_event(|window, event| {
             // Closing the window hides it; only the tray "Quit" exits.
@@ -453,7 +603,27 @@ pub fn run() {
                 }
             }
 
-            build_tray(app)?;
+            // Global hotkeys; failures only end up as an info line in the tray menu.
+            let hotkeys = load_hotkey_config();
+            let hotkey_lines: Vec<String> = [
+                register_hotkey(
+                    app.handle(),
+                    "Toggle",
+                    hotkeys.toggle.as_deref(),
+                    toggle_enabled_with_feedback,
+                ),
+                register_hotkey(
+                    app.handle(),
+                    "Dashboard",
+                    hotkeys.dashboard.as_deref(),
+                    open_dashboard,
+                ),
+            ]
+            .into_iter()
+            .flatten()
+            .collect();
+
+            build_tray(app, &hotkey_lines)?;
 
             // Start the dashboard server if nobody is serving it yet.
             let handle = app.handle().clone();
