@@ -1,6 +1,6 @@
 {
   "name": "claude-cache-warm",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Keeps the prompt cache of idle Claude Code sessions warm.",
   "type": "module",

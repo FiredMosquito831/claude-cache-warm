@@ -15,6 +15,7 @@ import {
   loadSession,
   readEvents,
   readLastUsage,
+  cronTick,
   saveConfig,
   sessionViews,
   setSessionOverrides,
@@ -49,6 +50,7 @@ const HELP = `ccw ${VERSION} - keep Claude Code's prompt cache warm while a sess
   ccw events [n]                  last n log events (default 20)
   ccw cron                        print the cron schedule + prompt for the CronCreate fallback
   ccw doctor                      check that hooks and the monitor are actually running
+  ccw set fallbackCron false      never arm the in-session cron task when a monitor is missing
 
 State lives in ${HOME}`;
 
@@ -239,6 +241,13 @@ try {
     case 'cron':
       cronInfo();
       break;
+    case 'cron-tick': {
+      // Called by the in-session scheduled task. Prints STOP when the task should delete itself.
+      const id = positional[0] || thisSession;
+      const r = id ? cronTick(id) : { keep: false, reason: 'no session id' };
+      console.log(r.keep ? `CONTINUE (${r.reason})` : `STOP (${r.reason})`);
+      break;
+    }
     case 'doctor':
       doctor();
       break;

@@ -43,7 +43,8 @@ function candidates(cwd) {
 }
 
 function ourCommand() {
-  return `node "${LAUNCHER.replace(/\\/g, '/')}"`;
+  // The status line shell may not have node on PATH; the installer's node certainly exists.
+  return `"${process.execPath.replace(/\\/g, '/')}" "${LAUNCHER.replace(/\\/g, '/')}"`;
 }
 
 export function refreshPluginRoot() {

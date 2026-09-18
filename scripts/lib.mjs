@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-export const VERSION = '0.1.0';
+export const VERSION = '0.2.0';
 
 export const HOME = process.env.CCW_HOME || path.join(os.homedir(), '.claude-cache-warm');
 export const CONFIG_PATH = path.join(HOME, 'config.json');
@@ -18,6 +18,7 @@ export const DEFAULT_CONFIG = Object.freeze({
   minContextTokens: 20000,
   warmWhen: 'background-work',
   engine: 'monitor',
+  fallbackCron: true,
   dashboardPort: 4777,
 });
 
@@ -150,6 +151,10 @@ export function validateConfigPatch(patch) {
         if (value === 'background-work' || value === 'always') out.warmWhen = value;
         else errors.push('warmWhen must be "background-work" or "always"');
         break;
+      case 'fallbackCron':
+        if (typeof value === 'boolean') out.fallbackCron = value;
+        else errors.push('fallbackCron must be true or false');
+        break;
       case 'engine':
         if (value === 'monitor' || value === 'cron') out.engine = value;
         else errors.push('engine must be "monitor" or "cron"');
@@ -175,7 +180,9 @@ export function loadConfig() {
 export function saveConfig(patch) {
   const { patch: clean, errors } = validateConfigPatch(patch);
   if (errors.length) throw new Error(errors.join('; '));
-  const next = { ...loadConfig(), ...clean };
+  const stored = readJson(CONFIG_PATH, {}) || {};
+  // pluginOptions is the hook's snapshot of the plugin-tab values, not a setting; carry it along.
+  const next = { ...loadConfig(), ...clean, ...(stored.pluginOptions ? { pluginOptions: stored.pluginOptions } : {}) };
   writeJsonAtomic(CONFIG_PATH, next);
   logEvent({ type: 'config', patch: clean });
   return next;
@@ -259,6 +266,11 @@ export function activeAgents(id, now = Date.now()) {
     .filter((n) => n.endsWith('.json'))
     .map((n) => readJson(path.join(agentsDir(id), n)))
     .filter((a) => a && now - (a.startedAt || 0) < (STALE_MS[a.kind] || STALE_MS.agent));
+}
+
+/** True when this session's monitor process has heart-beaten recently. */
+export function monitorAlive(id, now = Date.now()) {
+  return now - (loadMonitorState(id).heartbeatAt || 0) < 30_000;
 }
 
 export function loadMonitorState(id) {
@@ -464,6 +476,25 @@ export function sessionViews(now = Date.now(), thisSession = null) {
       };
     })
     .sort((a, b) => b.lastRequestAt - a.lastRequestAt);
+}
+
+/**
+ * Cron-engine turn: the scheduled prompt runs this. The turn itself is the ping,
+ * so all this decides is whether the task should keep existing.
+ */
+export function cronTick(id, now = Date.now()) {
+  const session = loadSession(id);
+  if (!session) return { keep: false, reason: 'session not registered' };
+  const monitor = loadMonitorState(id);
+  const st = computeStatus({ config: loadConfig(), session, monitor, usage: readLastUsage(session.transcriptPath), agents: activeAgents(id, now), now });
+  monitor.pingTimes = [...(monitor.pingTimes || []), now].slice(-200);
+  monitor.pingsTotal = (monitor.pingsTotal || 0) + 1;
+  saveMonitorState(id, monitor);
+  logEvent({ type: 'ping', sessionId: id, engine: 'cron', ttl: st.ttl, status: st.status, contextTokens: st.contextTokens, model: st.model, estCostUsd: st.pingUsd });
+  // Keep the task while there is something to warm and no monitor has taken over.
+  const keep = st.status === 'warming' && (loadConfig().engine === 'cron' || !monitorAlive(id, now));
+  if (!keep) updateSession(id, { cronArmedAt: 0 });
+  return { keep, reason: st.status };
 }
 
 export const PING_TEXT =

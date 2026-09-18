@@ -52,17 +52,27 @@ const sessionFile = path.join(home, 'sessions', 'sess-1.json');
 // Pretend the human walked away `idleMin` minutes ago.
 function setIdle(idleMin) {
   const t = Date.now() - idleMin * 60_000;
-  fs.writeFileSync(sessionFile, JSON.stringify({ ...readJson(sessionFile), startedAt: t, lastUserActivityAt: t, lastStopAt: t, lastWorkStopAt: t }));
+  fs.writeFileSync(sessionFile, JSON.stringify({ ...readJson(sessionFile), startedAt: t, lastUserActivityAt: t, lastStopAt: t, lastWorkStopAt: t, cronArmedAt: 0 }));
   // The last main-conversation response is what dates the cache, not the file's mtime.
   fs.writeFileSync(transcript, usageLine(t, { write: 80_000, id: 'm1' }));
   fs.rmSync(path.join(home, 'sessions', 'sess-1.monitor.json'), { force: true });
 }
 
-async function runMonitor(ms) {
+// Runs the real monitor. With `expect` lines wanted, returns as soon as they arrive (up to
+// 6s, since node startup can be slow on a loaded machine); otherwise waits `ms` for silence.
+async function runMonitor(ms, expect = 0) {
   const child = spawn(process.execPath, [path.join(ROOT, 'scripts/monitor.mjs')], { env });
   let out = '';
-  child.stdout.on('data', (d) => (out += d));
-  await new Promise((r) => setTimeout(r, ms));
+  await new Promise((resolve) => {
+    const done = setTimeout(resolve, expect ? 6000 : ms);
+    child.stdout.on('data', (d) => {
+      out += d;
+      if (expect && out.split('\n').filter(Boolean).length >= expect) {
+        clearTimeout(done);
+        setTimeout(resolve, 300); // a second line would be a bug; give it a moment to show
+      }
+    });
+  });
   child.kill();
   return out.split('\n').filter(Boolean);
 }
@@ -92,7 +102,7 @@ test('hook never fails the turn, even on garbage input', () => {
 });
 
 test('an active session is not pinged', async () => {
-  assert.deepEqual(await runMonitor(600), []);
+  assert.deepEqual(await runMonitor(1500), []);
   const st = JSON.parse(ccw('status', '--json').stdout).sessions[0];
   assert.equal(st.status, 'warming');
   assert.equal(st.ttl, '1h');
@@ -102,7 +112,7 @@ test('an active session is not pinged', async () => {
 
 test('an idle session gets exactly one ping, and that ping does not reset the idle clock', async () => {
   setIdle(51);
-  const lines = await runMonitor(800);
+  const lines = await runMonitor(800, 1);
   assert.equal(lines.length, 1, 'one ping, then wait a full interval');
   assert.match(lines[0], /^\[cache-warm\]/);
   hook('Stop'); // the keep-alive turn finishing
@@ -113,23 +123,23 @@ test('an idle session gets exactly one ping, and that ping does not reset the id
 test('off switch, idle cap, expired cache and per-session pause all stop pings', async () => {
   setIdle(51);
   ccw('off');
-  assert.deepEqual(await runMonitor(500), []);
+  assert.deepEqual(await runMonitor(1500), []);
   ccw('on');
 
   setIdle(55);
   ccw('set', 'maxIdleMinutes', '30');
-  assert.deepEqual(await runMonitor(500), []);
+  assert.deepEqual(await runMonitor(1500), []);
   ccw('set', 'maxIdleMinutes', '0');
 
   setIdle(75); // past the 1h TTL: a ping would be a full-price rewrite
-  assert.deepEqual(await runMonitor(500), []);
+  assert.deepEqual(await runMonitor(1500), []);
   assert.equal(JSON.parse(ccw('status', '--json').stdout).sessions[0].status, 'expired');
 
   setIdle(51);
   assert.equal(ccw('off', '--session').status, 0);
-  assert.deepEqual(await runMonitor(500), []);
+  assert.deepEqual(await runMonitor(1500), []);
   ccw('follow');
-  assert.equal((await runMonitor(800)).length, 1);
+  assert.equal((await runMonitor(800, 1)).length, 1);
 });
 
 test('default policy: an idle session is warmed only while background work is running', async () => {
@@ -138,41 +148,41 @@ test('default policy: an idle session is warmed only while background work is ru
   ccw('when', 'background-work');
   setIdle(51);
   assert.equal(status().status, 'no-work');
-  assert.deepEqual(await runMonitor(500), [], 'idle but nothing running: no ping');
+  assert.deepEqual(await runMonitor(1500), [], 'idle but nothing running: no ping');
 
   hook('SubagentStart', { agent_id: 'agent-1', agent_type: 'Explore' });
   hook('PostToolUse', { tool_name: 'Bash', tool_use_id: 'tu1', tool_input: { command: 'npm run build', run_in_background: true } });
   hook('PostToolUse', { tool_name: 'Bash', tool_use_id: 'tu2', tool_input: { command: 'ls' } });
   assert.equal(status().agentsRunning, 2, 'subagent + background shell; a foreground command is not work');
   assert.equal(status().status, 'warming');
-  assert.equal((await runMonitor(800)).length, 1);
+  assert.equal((await runMonitor(800, 1)).length, 1);
 
   setIdle(51);
   ccw('off', '--session');
-  assert.deepEqual(await runMonitor(500), [], 'per-session pause wins');
+  assert.deepEqual(await runMonitor(1500), [], 'per-session pause wins');
   ccw('follow');
 
   hook('SubagentStop', { agent_id: 'agent-1' });
   assert.equal(status().agentsRunning, 1);
   fs.rmSync(agentsDir, { recursive: true });
   assert.equal(status().status, 'no-work');
-  assert.deepEqual(await runMonitor(500), [], 'work finished: stand by again');
+  assert.deepEqual(await runMonitor(1500), [], 'work finished: stand by again');
 
   // one session can opt in to always-warm without touching the global default
   assert.equal(ccw('when', 'always', '--session').status, 0);
-  assert.equal((await runMonitor(800)).length, 1);
+  assert.equal((await runMonitor(800, 1)).length, 1);
   ccw('follow');
   ccw('when', 'always');
 });
 
 test('per-session overrides beat the global settings and can be cleared', async () => {
   setIdle(20);
-  assert.deepEqual(await runMonitor(500), [], '20 min idle < 50 min auto interval');
+  assert.deepEqual(await runMonitor(1500), [], '20 min idle < 50 min auto interval');
   assert.equal(ccw('interval', '15', '--session=sess').status, 0);
   const st = JSON.parse(ccw('status', '--json').stdout).sessions[0];
   assert.equal(st.intervalMinutes, 15);
   assert.deepEqual(st.overrides, { intervalMinutes: 15 });
-  assert.equal((await runMonitor(800)).length, 1);
+  assert.equal((await runMonitor(800, 1)).length, 1);
 
   assert.notEqual(ccw('set', 'engine', 'cron', '--session').status, 0, 'engine is global only');
   ccw('follow');
@@ -242,4 +252,62 @@ test('status line wraps an existing one, appends the segment, and uninstalls cle
   assert.equal(ccw('statusline', 'uninstall').status, 0);
   assert.deepEqual(readJson(settings), original);
   assert.ok(!fs.existsSync(path.join(home, 'statusline-launcher.mjs')));
+});
+
+test('without a monitor, the Stop hook arms an in-session cron task once, and cron-tick retires it', () => {
+  const stop = (extra = {}) => {
+    const out = hook('Stop', extra).stdout.toString().trim();
+    return out ? JSON.parse(out) : null;
+  };
+  ccw('when', 'always');
+  ccw('interval', 'auto');
+  setIdle(10); // warming, nothing due yet; no monitor heartbeat exists in this test
+  const first = stop();
+  assert.equal(first?.decision, 'block');
+  assert.match(first.reason, /CronCreate/);
+  assert.match(first.reason, /"\*\/30 \* \* \* \*"/, '30 is the largest clean cron step under the 50 min auto interval');
+  assert.match(first.reason, /cron-tick sess-1/);
+  assert.equal(stop(), null, 'armed once per need, not on every Stop');
+  assert.equal(stop({ stop_hook_active: true }), null);
+
+  // the scheduled turn runs cron-tick: keep going while there is something to warm...
+  let r = ccw('cron-tick', 'sess-1');
+  assert.match(r.stdout, /^CONTINUE/);
+  assert.match(fs.readFileSync(path.join(home, 'events.jsonl'), 'utf8'), /"engine":"cron"/);
+  // ...and retire once there is not, which re-arms the Stop hook for next time
+  ccw('off');
+  assert.match(ccw('cron-tick', 'sess-1').stdout, /^STOP/);
+  ccw('on');
+  assert.equal(stop()?.decision, 'block', 're-armed after the task retired itself');
+
+  // a live monitor means no fallback is needed
+  fs.writeFileSync(path.join(home, 'sessions', 'sess-1.monitor.json'), JSON.stringify({ heartbeatAt: Date.now(), pingTimes: [] }));
+  hook('PostToolUse', { tool_name: 'CronDelete', tool_input: { id: 'x' } });
+  assert.equal(stop(), null);
+  fs.rmSync(path.join(home, 'sessions', 'sess-1.monitor.json'));
+
+  ccw('set', 'fallbackCron', 'false');
+  assert.equal(stop(), null, 'opt-out respected');
+  ccw('set', 'fallbackCron', 'true');
+});
+
+test('plugin-tab options apply when they change, without clobbering dashboard/CLI edits', () => {
+  const start = (opts) => spawnSync(process.execPath, [path.join(ROOT, 'scripts/hook.mjs')], {
+    env: { ...env, ...Object.fromEntries(Object.entries(opts).map(([k, v]) => [`CLAUDE_PLUGIN_OPTION_${k}`, v])) },
+    input: JSON.stringify({ hook_event_name: 'SessionStart', session_id: 'sess-1', transcript_path: transcript, cwd: tmp, source: 'resume' }),
+  });
+  const cfg = () => readJson(path.join(home, 'config.json'));
+  start({ INTERVAL_MINUTES: '40', WARM_WHEN: 'always', MAX_IDLE_MINUTES: '90' });
+  assert.equal(cfg().intervalMinutes, 40);
+  assert.equal(cfg().maxIdleMinutes, 90);
+
+  ccw('interval', '25'); // edited elsewhere
+  start({ INTERVAL_MINUTES: '40', WARM_WHEN: 'always', MAX_IDLE_MINUTES: '90' }); // plugin tab unchanged
+  assert.equal(cfg().intervalMinutes, 25, 'unchanged plugin options must not overwrite CLI edits');
+
+  start({ INTERVAL_MINUTES: '45', WARM_WHEN: 'always', MAX_IDLE_MINUTES: '90' }); // user changed it in the plugin tab
+  assert.equal(cfg().intervalMinutes, 45);
+  assert.equal(cfg().maxIdleMinutes, 90);
+  ccw('interval', 'auto');
+  ccw('set', 'maxIdleMinutes', '0');
 });

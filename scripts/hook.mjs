@@ -1,19 +1,29 @@
 #!/usr/bin/env node
 // Hook entry point: records session activity so the monitor knows when the
 // session went idle. Must never block or fail the user's turn: always exit 0.
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   CONFIG_PATH,
+  activeAgents,
   clearAgents,
+  computeStatus,
   ensureHome,
+  loadConfig,
   loadMonitorState,
   loadSession,
   logEvent,
   markAgent,
+  monitorAlive,
   pruneSessions,
   readJson,
+  readLastUsage,
   saveConfig,
   updateSession,
+  writeJsonAtomic,
 } from './lib.mjs';
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 import { refreshPluginRoot } from './statusline-install.mjs';
 
 function readStdin() {
@@ -27,21 +37,63 @@ function readStdin() {
   });
 }
 
-// First run only: seed config.json from the options chosen when the plugin was enabled.
-// After that config.json is the live source of truth (CLI, dashboard and tray all edit it).
-function seedConfigFromPluginOptions() {
-  if (readJson(CONFIG_PATH)) return;
-  const env = process.env;
+// Plugin-tab options (CLAUDE_PLUGIN_OPTION_*) and config.json are both editable, so
+// neither may blindly overwrite the other. The last-applied option values are kept in
+// config.json; an option that differs from that snapshot was changed in the plugin tab
+// and wins. Everything else keeps whatever the CLI, dashboard or tray app set.
+const OPTION_KEYS = {
+  ENABLED: ['enabled', (v) => v !== 'false'],
+  WARM_WHEN: ['warmWhen', (v) => v],
+  INTERVAL_MINUTES: ['intervalMinutes', (v) => (v === 'auto' ? 'auto' : Number(v))],
+  MAX_IDLE_MINUTES: ['maxIdleMinutes', Number],
+  MIN_CONTEXT_TOKENS: ['minContextTokens', Number],
+  FALLBACK_CRON: ['fallbackCron', (v) => v !== 'false'],
+  DASHBOARD_PORT: ['dashboardPort', Number],
+};
+
+function syncPluginOptions() {
+  const stored = readJson(CONFIG_PATH) || {};
+  const seen = stored.pluginOptions || {};
+  const current = {};
   const patch = {};
-  if (env.CLAUDE_PLUGIN_OPTION_ENABLED != null) patch.enabled = env.CLAUDE_PLUGIN_OPTION_ENABLED !== 'false';
-  const interval = env.CLAUDE_PLUGIN_OPTION_INTERVAL_MINUTES;
-  if (interval) patch.intervalMinutes = interval === 'auto' ? 'auto' : Number(interval);
-  if (env.CLAUDE_PLUGIN_OPTION_MAX_IDLE_MINUTES) patch.maxIdleMinutes = Number(env.CLAUDE_PLUGIN_OPTION_MAX_IDLE_MINUTES);
-  try {
-    saveConfig(patch);
-  } catch {
-    saveConfig({});
+  for (const [envKey, [key, parse]] of Object.entries(OPTION_KEYS)) {
+    const raw = process.env[`CLAUDE_PLUGIN_OPTION_${envKey}`];
+    if (raw == null || raw === '') continue;
+    current[key] = raw;
+    if (seen[key] !== raw) patch[key] = parse(raw);
   }
+  if (!Object.keys(patch).length && JSON.stringify(current) === JSON.stringify(seen)) return;
+  let next;
+  try {
+    next = saveConfig(patch);
+  } catch {
+    next = saveConfig({}); // an invalid option value: keep the rest, drop the bad one
+  }
+  writeJsonAtomic(CONFIG_PATH, { ...next, pluginOptions: current });
+}
+
+// Plugin monitors turned out not to start for every session (a `claude --resume`
+// got none). When there is no monitor, arm an in-session scheduled task instead.
+// Claude Code has no hook that creates one, but a Stop hook may ask Claude to keep
+// going, so once per need we ask it to call CronCreate. Costs one tool call.
+function cronFallbackPrompt(id, input, now) {
+  if (input.stop_hook_active) return null; // never loop
+  const config = loadConfig();
+  if (config.engine !== 'cron' && (!config.fallbackCron || monitorAlive(id, now))) return null;
+  const session = loadSession(id);
+  if (!session || session.cronArmedAt) return null;
+  const st = computeStatus({ config, session, monitor: loadMonitorState(id), usage: readLastUsage(session.transcriptPath), agents: activeAgents(id, now), now });
+  if (st.status !== 'warming') return null;
+  // Cron steps must divide the hour evenly; recurring tasks fire with jitter, so stay under the interval.
+  const step = [30, 20, 15, 12, 10, 6, 5, 4, 3, 2, 1].find((s) => s <= st.intervalMinutes) || 1;
+  updateSession(id, { cronArmedAt: now });
+  logEvent({ type: 'cron_armed', sessionId: id, step, intervalMinutes: st.intervalMinutes });
+  const tick = `node "${ROOT.replace(/\\/g, '/')}/scripts/ccw.mjs" cron-tick ${id}`;
+  return (
+    `[cache-warm] This session has no keep-alive monitor, so schedule one in-session: call CronCreate with cron "*/${step} * * * *", recurring: true, and this exact prompt:\n` +
+    `"[cache-warm] keep-alive: run \`${tick}\` with Bash. If it prints STOP, call CronList and CronDelete the task whose prompt starts with [cache-warm]. Otherwise reply with exactly ok. Do nothing else."\n` +
+    `Then reply with one short line saying the cache keep-alive task is scheduled. Do nothing else.`
+  );
 }
 
 async function main() {
@@ -58,7 +110,7 @@ async function main() {
 
   switch (input.hook_event_name) {
     case 'SessionStart':
-      seedConfigFromPluginOptions();
+      syncPluginOptions();
       refreshPluginRoot(); // plugin updates move the install dir; keep the status line launcher pointed at it
       pruneSessions(now);
       // No agent survives a restart. /clear, /compact and resume keep the process, and its agents, alive.
@@ -79,6 +131,8 @@ async function main() {
       const lastPingAt = pingTimes[pingTimes.length - 1] || 0;
       const closesPing = lastPingAt > Math.max(session.lastUserActivityAt || 0, session.lastStopAt || 0);
       updateSession(id, { ...common, lastStopAt: now, ...(closesPing ? {} : { lastWorkStopAt: now }) });
+      const reason = cronFallbackPrompt(id, input, now);
+      if (reason) process.stdout.write(JSON.stringify({ decision: 'block', reason }) + '\n');
       break;
     }
 
@@ -91,6 +145,7 @@ async function main() {
       break;
 
     case 'PostToolUse':
+      if (input.tool_name === 'CronDelete') updateSession(id, { cronArmedAt: 0 });
       // A shell command sent to the background keeps working after the turn ends.
       if (input.tool_input?.run_in_background === true) {
         const shellId = `shell-${input.tool_use_id || now}`;

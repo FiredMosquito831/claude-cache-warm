@@ -1,25 +1,46 @@
 {
   "name": "cache-warm",
   "displayName": "Cache Warm",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Keeps the prompt cache of idle Claude Code sessions warm with activity-aware keep-alive pings. Configurable interval, on/off switch, idle cap, cost estimates, web dashboard.",
-  "author": { "name": "FiredMosquito831", "url": "https://github.com/FiredMosquito831" },
+  "author": {
+    "name": "FiredMosquito831",
+    "url": "https://github.com/FiredMosquito831"
+  },
   "homepage": "https://github.com/FiredMosquito831/claude-cache-warm",
   "repository": "https://github.com/FiredMosquito831/claude-cache-warm",
   "license": "MIT",
-  "keywords": ["prompt-cache", "cache", "keep-alive", "cost", "latency"],
-  "experimental": { "monitors": "./monitors/monitors.json" },
+  "keywords": [
+    "prompt-cache",
+    "cache",
+    "keep-alive",
+    "cost",
+    "latency"
+  ],
+  "experimental": {
+    "monitors": "./monitors/monitors.json"
+  },
   "userConfig": {
     "enabled": {
       "type": "boolean",
-      "title": "Warm caches by default",
-      "description": "Initial state of the master switch. Change it any time with /cache-warm:on and /cache-warm:off.",
+      "title": "Warming on",
+      "description": "Master switch. Also switchable any time with /cache-warm:on and /cache-warm:off.",
       "default": true
+    },
+    "warm_when": {
+      "type": "string",
+      "title": "Warm a session",
+      "description": "background-work: only while a subagent or background task is running in it (recommended). always: any idle session.",
+      "default": "background-work",
+      "options": [
+        "background-work",
+        "always"
+      ]
     },
     "interval_minutes": {
       "type": "string",
       "title": "Ping interval (minutes)",
-      "description": "\"auto\" picks 50 on a 1-hour cache and 4 on a 5-minute cache. Otherwise a number from 1 to 59.",
+      "description": "auto = 50 on a 1-hour cache, 4 on a 5-minute cache. Otherwise a number from 1 to 59, shorter than your cache TTL.",
       "default": "auto"
     },
     "max_idle_minutes": {
@@ -28,6 +49,27 @@
       "description": "Stop pinging a session once you have been away this long. 0 = never stop.",
       "default": 180,
       "min": 0
+    },
+    "min_context_tokens": {
+      "type": "number",
+      "title": "Skip sessions below (tokens)",
+      "description": "Small contexts are cheap to rebuild; do not warm them.",
+      "default": 20000,
+      "min": 0
+    },
+    "fallback_cron": {
+      "type": "boolean",
+      "title": "In-session fallback when no monitor",
+      "description": "If Claude Code did not start the plugin monitor for a session, ask Claude once to schedule an in-session keep-alive task instead (one tool call).",
+      "default": true
+    },
+    "dashboard_port": {
+      "type": "number",
+      "title": "Dashboard port",
+      "description": "Local port for ccw dashboard.",
+      "default": 4777,
+      "min": 1024,
+      "max": 65535
     }
   }
 }

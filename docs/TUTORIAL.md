@@ -46,6 +46,8 @@ A ping is one line delivered to the idle session. Claude answers `ok`. That sing
 
 Typical case it is built for: you launch a 90-minute background agent or a long build, go for lunch, and come back to a conversation with 600K tokens of context. Without warming, the first turn back re-writes all 600K tokens at full price and is slow. With warming, one ping at minute 50 kept it alive.
 
+Every setting here is also in the plugin's options page (`/plugin` → cache-warm → configure). Changes made there apply at the next session start; changes made with `ccw` or the dashboard apply within 5 seconds.
+
 ## 3. Check that it works
 
 ```text
@@ -229,7 +231,7 @@ Without the tray app, the fastest toggle inside Claude Code is typing `/cache-wa
 
 | Symptom | Cause and fix |
 | :--- | :--- |
-| `[no monitor]` in status | Plugin monitors are experimental and only run in interactive CLI sessions. Start a new session after installing. In the desktop app, or if monitors are unavailable, use the fallback: `/cache-warm:config engine cron` |
+| `[no monitor]` in status | Plugin monitors are experimental; they only run in interactive CLI sessions and were not started for a `claude --resume` session in testing. Nothing to do: with `fallbackCron` on (default), the first time that session has something to warm, Claude is asked once to schedule an in-session keep-alive task (you will see one `CronCreate` call). `ccw set fallbackCron false` turns that off; `/cache-warm:config engine cron` forces it |
 | Session not listed | It registers on its first prompt after the plugin was enabled |
 | Always `no-work` | Correct when nothing runs in the background. Use `ccw when always` (optionally `--session`) to warm plain idle sessions too |
 | `warning: interval … is not shorter than the … TTL` | That session uses the 5-minute cache. Use `ccw interval auto`, or enable the 1-hour TTL |

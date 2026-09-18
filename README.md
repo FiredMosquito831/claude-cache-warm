@@ -60,10 +60,11 @@ Every change applies to running sessions within 5 seconds. Nothing needs a resta
 | `intervalMinutes` | `auto` | `auto` = 50 on a 1h cache, 4 on a 5m cache (detected from the transcript). Must be shorter than the TTL. |
 | `maxIdleMinutes` | `180` | Stop pinging once you've been away this long |
 | `minContextTokens` | `20000` | Small contexts are cheap to rebuild; skip them |
+| `fallbackCron` | `true` | When a session has no monitor process, ask Claude once (via a Stop hook) to schedule an in-session keep-alive task instead |
 | `engine` | `monitor` | `monitor` or `cron` (see below) |
 | `dashboardPort` | `4777` | |
 
-Stored in `~/.claude-cache-warm/config.json` (override the directory with `CCW_HOME`).
+Stored in `~/.claude-cache-warm/config.json` (override the directory with `CCW_HOME`). The same settings are exposed in the plugin's options (`/plugin` → cache-warm → configure); a value changed there is applied at the next session start without overwriting edits made elsewhere.
 
 ## How it works
 
@@ -101,7 +102,7 @@ Keep-alive turns don't reset the idle clock, so pings can't keep their own sessi
 | Lifetime | Whole session | Expires after 7 days |
 | Works in | Interactive CLI sessions | Anywhere scheduled tasks work, including the desktop app |
 
-Plugin monitors are an experimental Claude Code feature and only run in interactive CLI sessions. After your first real idle period, `ccw doctor` and the dashboard's "Pings sent" tile (n/m verified as cache hits) confirm that pings are landing on a warm cache. If `ccw status` shows `[no monitor]`, run `/cache-warm:config engine cron`.
+Plugin monitors are an experimental Claude Code feature and only run in interactive CLI sessions. In practice they did not start for a `claude --resume` session either. That is why the fallback exists: when a session has no monitor heartbeat and something needs warming, the Stop hook asks Claude once to `CronCreate` a keep-alive task (one tool call). That task runs `ccw cron-tick`, which reports STOP once there is nothing left to warm, and Claude deletes it. After your first real idle period, `ccw doctor` and the dashboard's "Pings sent" tile (n/m verified as cache hits) confirm that pings are landing on a warm cache. If `ccw status` shows `[no monitor]`, run `/cache-warm:config engine cron`.
 
 ## Picking an interval
 
