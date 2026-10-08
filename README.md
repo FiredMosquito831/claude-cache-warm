@@ -141,7 +141,7 @@ cd desktop && npm install && npm run dev    # or: npm run build
 ## Costs and caveats
 
 - A ping is a real model turn: one cache read of the full context plus a few output tokens. On a subscription it counts against your usage limits. `ccw status` shows the estimate per session.
-- Each ping adds two short messages to the conversation.
+- Each ping adds two short messages to the conversation: a "Stop hook feedback" note carrying the keep-alive line, and Claude's `ok`.
 - A foreground subagent blocks the main conversation inside a tool call; nothing can refresh the main cache until it returns. Warming covers background work.
 - Things that invalidate the cache anyway (model switch, `/compact`, MCP tools changing, upgrading Claude Code) are outside this plugin's reach. See [How Claude Code uses prompt caching](https://code.claude.com/docs/en/prompt-caching).
 

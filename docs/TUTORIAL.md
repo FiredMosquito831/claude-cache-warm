@@ -236,7 +236,7 @@ The tray menu drives the global scope (on/off, background-work only, interval); 
 
 **What it does change:**
 
-- Each ping adds two short messages to the conversation (a one-line note and `ok`).
+- Each ping adds two short messages to the conversation: a "Stop hook feedback" note with the keep-alive line (that's how Claude Code shows a background hook waking the session), and Claude's `ok`.
 - Each ping is a real request: one cache read of the context, counted toward subscription usage limits.
 - Pings never count as activity, so they can't keep a session alive past the idle cap.
 
