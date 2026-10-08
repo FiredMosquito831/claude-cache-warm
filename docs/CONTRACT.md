@@ -54,6 +54,7 @@ rather than stall a hook). The tray app takes the same lock.
 | `maxIdleMinutes` | number >= 0 (0 = never) | all |
 | `minContextTokens` | number >= 0 | all |
 | `dashboardPort` | 1024-65535 | global only |
+| `statusline` | `auto` \| `wrap-only` \| `off` | global only |
 
 Effective value: the first defined in
 `session.overrides` > `projects[<deepest folder containing cwd>]` > `surfaces[<surface>]` > `global` > plugin tab (desktop part only for desktop sessions, then the global part) > built-in defaults.
@@ -95,7 +96,7 @@ Timestamps are epoch ms.
 ### sessions/<id>.state.json
 
 ```json
-{ "pingTimes": [0], "pingsTotal": 0, "waker": { "gen": "pid.startedAt", "pid": 0, "startedAt": 0, "heartbeatAt": 0, "status": "sleeping", "lastStatus": "warming", "nextPingAt": 0, "exitReason": null } }
+{ "pingTimes": [0], "pingsTotal": 0, "lastPing": { "at": 0, "result": "hit", "read": 0, "write": 0 }, "consecutiveMisses": 0, "suspended": null, "waker": { "gen": "pid.startedAt", "pid": 0, "startedAt": 0, "heartbeatAt": 0, "status": "sleeping", "lastStatus": "warming", "nextPingAt": 0, "exitReason": null } }
 ```
 
 Exactly one waker owns a session at a time: the one whose `gen` is stored. A
@@ -107,6 +108,8 @@ at its next check. `status`: `sleeping` → `pinged` (exited 2) or `done`
 ### events.jsonl
 
 `{"t": <ms>, "type": "ping" | "session_start" | "session_end" | "config" | "plugin_options" | "migrated" | "legacy_cron_cleanup" | "waker_error" | "hook_error", ...}`
+
+`ping_result` events carry `result` (`hit` / `miss` / `unknown`), `read`, `write`, `surface`; `self_test_start` / `self_test_end` bracket a `ccw test`; `statusline` events record automatic wraps, overlays and removals.
 
 `ping` events carry `engine: "rewake"` (0.2 wrote `monitor` or `cron`), `surface`, `ttl`, `intervalMinutes`, `idleMs`, `sinceRequestMs`, `work`, `contextTokens`, `model`, `estCostUsd`.
 

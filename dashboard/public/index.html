@@ -78,7 +78,7 @@
   .scroll { overflow-x: auto; }
   .pill { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
-  .dot.warming, .dot.busy { background: var(--good); } .dot.expired, .dot.idle-cap, .dot.ping-cap { background: var(--warning); }
+  .dot.warming, .dot.busy { background: var(--good); } .dot.expired, .dot.idle-cap, .dot.ping-cap, .dot.suspended { background: var(--warning); }
   .empty { color: var(--muted); padding: 18px 0; text-align: center; }
 
   .legend { display: flex; gap: 16px; font-size: 12px; color: var(--ink-2); margin: 0 0 8px; }
@@ -244,7 +244,7 @@ function renderSessions() {
   if (!rows.length) return table.replaceChildren(el('tr', {}, el('td', { className: 'empty', textContent: 'No live sessions yet. A session registers on its first prompt after the plugin is enabled.' })));
   // Rebuilding the table every second would close an open dropdown, so hold still while one has focus.
   if (table.contains(document.activeElement) && ['SELECT', 'INPUT'].includes(document.activeElement.tagName)) return;
-  const LABEL = { warming: 'Warming', busy: 'Turn in progress', off: 'Off', 'no-work': 'Standing by (nothing in the background)', 'small-context': 'Context too small', 'idle-cap': 'Idle cap reached', 'ping-cap': 'Ping cap reached', expired: 'Cache already expired' };
+  const LABEL = { warming: 'Warming', busy: 'Turn in progress', off: 'Off', 'no-work': 'Standing by (nothing in the background)', 'small-context': 'Context too small', 'idle-cap': 'Idle cap reached', 'ping-cap': 'Ping cap reached', suspended: 'Suspended: pings missed the cache', expired: 'Cache already expired' };
   const head = el('tr', {}, ...['Session', 'Status', 'Next ping', 'Context', 'TTL', 'Idle', 'Pings', 'Per ping', 'Cold return', 'Warm when', 'Interval', 'Idle cap (min)', ''].map((h, i) => el('th', { textContent: h, className: i >= 3 && i <= 8 ? 'num' : '' })));
   table.replaceChildren(head, ...rows.map((s) => {
     const scope = 'session:' + s.sessionId;
@@ -294,6 +294,7 @@ const FIELDS = [
   ['maxIdleMinutes', 'Stop after idle (minutes, 0 = never)', null, Number],
   ['minContextTokens', 'Skip sessions below (tokens)', null, Number],
   ['dashboardPort', 'Dashboard port', null, Number],
+  ['statusline', 'Status line segment', [['auto', 'Auto: on every status line, create one if none'], ['wrap-only', 'Only add to existing status lines'], ['off', 'Off: restore the originals']], (v) => v],
 ];
 
 function renderConfig() {
@@ -323,7 +324,7 @@ function renderConfig() {
     if (sc.own[k] === undefined) return `${fmtSetting(k, sc.values[k])} from ${SCOPE_LABEL(src)}`;
     return isGlobal ? `plugin tab or default` : 'the scope below';
   };
-  const fields = FIELDS.filter(([k]) => isGlobal || k !== 'dashboardPort').map(([k, label, options, parse]) => {
+  const fields = FIELDS.filter(([k]) => isGlobal || !['dashboardPort', 'statusline'].includes(k)).map(([k, label, options, parse]) => {
     const own = sc.own[k];
     let input;
     if (options) {

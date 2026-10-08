@@ -99,6 +99,10 @@ async function main() {
     if (session.claudePid && !lib.pidAlive(session.claudePid)) return finish('claude exited');
     if (now - startedAt > LIFETIME_MS) return finish('lifetime');
 
+    // Judge the previous ping once its turn is in the transcript (may end a self-test or suspend warming).
+    lib.verifyLastPing(id, session, now);
+    lib.expireSelfTest(session, now);
+
     const { values: settings } = lib.resolveSettings({ session });
     const st = lib.computeStatus({ settings, session, state: lib.loadState(id), usage: lib.readLastUsage(session.transcriptPath), now });
     if (lib.FINAL_STATUSES.has(st.status)) return finish(st.status);
@@ -112,6 +116,7 @@ async function main() {
           ...s,
           pingTimes: [...(s.pingTimes || []), now].slice(-200),
           pingsTotal: (s.pingsTotal || 0) + 1,
+          lastPing: { at: now, result: null, surface: session.surface },
           waker: { ...s.waker, status: 'pinged', exitedAt: now },
         };
       });
@@ -135,6 +140,7 @@ async function main() {
 
     if (now - lastBeat >= HEARTBEAT_MS) {
       lastBeat = now;
+      lib.syncPluginOptions(lib.pluginOptionsFromSettings()); // a plugin-tab edit applies within a minute
       lib.updateState(id, (s) => (s.waker?.gen === gen ? { ...s, waker: { ...s.waker, heartbeatAt: now, status: 'sleeping', lastStatus: st.status, nextPingAt: st.nextPingAt } } : s));
     }
     const untilDue = st.nextPingAt ? st.nextPingAt - now : POLL_MS;

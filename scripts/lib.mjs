@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-export const VERSION = '0.3.0';
+export const VERSION = '0.4.0';
 
 export const HOME = process.env.CCW_HOME || path.join(os.homedir(), '.claude-cache-warm');
 export const CONFIG_PATH = path.join(HOME, 'config.json');
@@ -17,7 +17,7 @@ export const EVENTS_PATH = path.join(HOME, 'events.jsonl');
 /** Settings every scope (global, surface, project, session) may set. */
 export const SCOPED_KEYS = ['enabled', 'warmWhen', 'intervalMinutes', 'maxIdleMinutes', 'minContextTokens'];
 /** Settings that only make sense once per machine. */
-export const GLOBAL_ONLY_KEYS = ['dashboardPort'];
+export const GLOBAL_ONLY_KEYS = ['dashboardPort', 'statusline'];
 
 export const DEFAULTS = Object.freeze({
   enabled: true,
@@ -26,6 +26,7 @@ export const DEFAULTS = Object.freeze({
   maxIdleMinutes: 180,
   minContextTokens: 20000,
   dashboardPort: 4777,
+  statusline: 'auto', // add the segment to every status line, creating one if there is none
 });
 
 export const SURFACES = ['cli', 'desktop', 'ide'];
@@ -225,6 +226,10 @@ export function validateSettings(patch, { allowNull = false, globalOnly = true }
         if (Number.isFinite(+value) && +value >= 0) out.minContextTokens = +value;
         else errors.push('minContextTokens must be a number >= 0');
         break;
+      case 'statusline':
+        if (['auto', 'wrap-only', 'off'].includes(value)) out.statusline = value;
+        else errors.push('statusline must be "auto", "wrap-only" or "off"');
+        break;
       case 'dashboardPort':
         if (Number.isInteger(+value) && +value >= 1024 && +value <= 65535) out.dashboardPort = +value;
         else errors.push('dashboardPort must be an integer from 1024 to 65535');
@@ -396,7 +401,20 @@ const PLUGIN_OPTIONS = {
   MIN_CONTEXT_TOKENS: 'minContextTokens',
   DASHBOARD_PORT: 'dashboardPort',
   DESKTOP_MODE: 'desktopMode',
+  STATUSLINE: 'statusline',
 };
+
+/**
+ * The plugin tab as stored by Claude Code (~/.claude/settings.json, pluginConfigs),
+ * in the same CLAUDE_PLUGIN_OPTION_* shape hooks receive. Lets everything pick up
+ * a tab edit right away instead of at the next session start.
+ */
+export function pluginOptionsFromSettings() {
+  const dir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
+  const options = readJson(path.join(dir, 'settings.json'), null)?.pluginConfigs?.['cache-warm@claude-cache-warm']?.options;
+  if (!options) return {};
+  return Object.fromEntries(Object.entries(options).map(([k, v]) => [`CLAUDE_PLUGIN_OPTION_${k.toUpperCase()}`, String(v)]));
+}
 
 export function pluginTabLayers() {
   const raw = readJson(PLUGIN_OPTIONS_PATH, null)?.raw || {};
@@ -420,7 +438,8 @@ export function syncPluginOptions(env = process.env) {
     const prev = readJson(PLUGIN_OPTIONS_PATH, null)?.raw || {};
     const changed = Object.keys(raw).filter((k) => prev[k] !== raw[k]);
     if (!changed.length) return [];
-    writeJsonAtomic(PLUGIN_OPTIONS_PATH, { raw, seenAt: Date.now() });
+    // Merge: hook env and settings.json may not list the same keys; a key one source omits is not a change.
+    writeJsonAtomic(PLUGIN_OPTIONS_PATH, { raw: { ...prev, ...raw }, seenAt: Date.now() });
     updateConfigFile((cfg) => {
       for (const k of changed) {
         if (k === 'desktopMode') {
@@ -782,6 +801,7 @@ export function computeStatus({ settings, session, state, usage, now = Date.now(
   else if (base.contextTokens < settings.minContextTokens) status = 'small-context';
   else if (settings.maxIdleMinutes > 0 && now - lastHumanAt > settings.maxIdleMinutes * 60_000) status = 'idle-cap';
   else if (pingsSinceActivity >= pingCap) status = 'ping-cap';
+  else if (state?.suspended && state.suspended.at >= lastHumanAt) status = 'suspended'; // pings were missing the cache
   else if (now - lastRequestAt > TTL_MINUTES[ttl] * 60_000) status = 'expired'; // a ping now would be the expensive rewrite
   else status = 'warming';
 
@@ -790,7 +810,80 @@ export function computeStatus({ settings, session, state, usage, now = Date.now(
 }
 
 /** Statuses after which a waker has nothing left to wait for. */
-export const FINAL_STATUSES = new Set(['ended', 'expired', 'idle-cap', 'ping-cap']);
+export const FINAL_STATUSES = new Set(['ended', 'expired', 'idle-cap', 'ping-cap', 'suspended']);
+
+/**
+ * Did a ping's turn read the conversation from the cache? A hit reads (nearly)
+ * everything; a miss had to write it again, i.e. the ping cost a full rebuild.
+ */
+export function judgePing(usage) {
+  const total = (usage?.cacheRead || 0) + (usage?.cacheCreation || 0);
+  if (!total) return null;
+  return usage.cacheCreation <= total * 0.2 ? 'hit' : 'miss';
+}
+
+/** A ping that misses twice in a row stops warming that session until someone is active again. */
+export const MISSES_BEFORE_SUSPEND = 2;
+
+/**
+ * Called by every waker pass: judge the last ping once its turn shows up in the
+ * transcript, end a self-test, suspend a session whose pings keep missing.
+ */
+export function verifyLastPing(id, session, now = Date.now()) {
+  const state = loadState(id);
+  const ping = state.lastPing;
+  if (!ping || ping.result) return null;
+  const usage = readLastUsage(session.transcriptPath);
+  if (!usage || usage.timestamp < ping.at - 1000) {
+    // give up after 10 minutes: the turn never reached the transcript
+    if (now - ping.at > 600_000) updateState(id, (s) => ({ ...s, lastPing: { ...s.lastPing, result: 'unknown' } }));
+    return null;
+  }
+  const result = judgePing(usage) || 'unknown';
+  let suspended = false;
+  updateState(id, (s) => {
+    const misses = result === 'miss' ? (s.consecutiveMisses || 0) + 1 : 0;
+    suspended = misses >= MISSES_BEFORE_SUSPEND;
+    return {
+      ...s,
+      lastPing: { ...s.lastPing, result, read: usage.cacheRead, write: usage.cacheCreation },
+      consecutiveMisses: misses,
+      ...(suspended ? { suspended: { at: now, reason: `${misses} pings in a row missed the cache` } } : {}),
+    };
+  });
+  logEvent({ type: 'ping_result', sessionId: id, surface: session.surface, result, read: usage.cacheRead, write: usage.cacheCreation, ...(suspended ? { suspended: true } : {}) });
+  if (session.test) endSelfTest(id, result);
+  return result;
+}
+
+// ---------------------------------------------------------------- self-test
+
+const TEST_OVERRIDES = { enabled: true, warmWhen: 'always', intervalMinutes: 1, minContextTokens: 0, maxIdleMinutes: 0 };
+const TEST_MAX_MS = 15 * 60_000;
+
+/** Ping this session once, a minute after its next turn ends, then put its settings back. */
+export function startSelfTest(id, now = Date.now()) {
+  const s = loadSession(id);
+  if (!s) throw new Error('this session is not registered yet; send one prompt first');
+  updateSession(id, (cur) => ({
+    ...cur,
+    test: { startedAt: now, restore: cur.test ? cur.test.restore : cur.overrides || {} },
+    overrides: { ...(cur.test ? cur.test.restore : cur.overrides || {}), ...TEST_OVERRIDES },
+    testResult: null,
+  }));
+  updateState(id, (st) => ({ ...st, suspended: null, consecutiveMisses: 0 }));
+  logEvent({ type: 'self_test_start', sessionId: id, surface: s.surface });
+}
+
+export function endSelfTest(id, result, now = Date.now()) {
+  updateSession(id, (cur) => (cur.test ? { ...cur, overrides: cur.test.restore || {}, test: null, testResult: { at: now, result, surface: cur.surface } } : cur));
+  logEvent({ type: 'self_test_end', sessionId: id, result });
+}
+
+/** A self-test that never got its ping (session closed, wake failed) must not leave 1-minute pings behind. */
+export function expireSelfTest(session, now = Date.now()) {
+  if (session?.test && now - session.test.startedAt > TEST_MAX_MS) endSelfTest(session.sessionId, 'no ping within 15 minutes', now);
+}
 
 export const WAKER_STALE_MS = 3 * 60_000;
 

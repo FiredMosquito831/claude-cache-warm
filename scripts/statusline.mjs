@@ -114,9 +114,11 @@ export function buildSegment(data, now = Date.now()) {
     off: [C.dim, '○', 'warm off'],
     'idle-cap': [C.yellow, '◌', 'warm paused (idle cap)'],
     'ping-cap': [C.yellow, '◌', 'warm paused (ping cap)'],
+    suspended: [C.red, '◌', 'warm suspended (pings missed the cache)'],
     expired: [C.yellow, '◌', 'warm paused (cache expired)'],
     'small-context': [C.dim, '◌', 'warm skipped (small context)'],
   };
+  if (session?.test) LABEL.warming[2] = `self-test: ping in ${st?.nextPingAt ? fmtDuration(Math.max(0, st.nextPingAt - now)) : 'a minute after this turn'}`;
   const [color, glyph, text] = (st && LABEL[st.status]) || [C.dim, '○', session ? 'warm off' : 'warm: waiting for first prompt'];
   const jobs = st?.work?.count || 0;
   parts.push(`${color}${glyph}${C.reset} ${text}${jobs ? ` ${C.dim}(${jobs} bg job${jobs > 1 ? 's' : ''})${C.reset}` : ''}`);

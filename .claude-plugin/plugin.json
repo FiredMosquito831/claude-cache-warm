@@ -1,7 +1,7 @@
 {
   "name": "cache-warm",
   "displayName": "Cache Warm",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Keeps the prompt cache of idle Claude Code sessions warm. Works the same in the CLI, IDE and Desktop app; per-session, per-project, per-surface and global settings.",
   "author": {
     "name": "FiredMosquito831",
@@ -73,6 +73,17 @@
       "default": 4777,
       "min": 1024,
       "max": 65535
+    },
+    "statusline": {
+      "type": "string",
+      "title": "Status line segment",
+      "description": "auto: add the cache segment to your status line (creating one if you have none). wrap-only: only add it to an existing status line. off: remove it and restore your original status line exactly.",
+      "default": "auto",
+      "options": [
+        "auto",
+        "wrap-only",
+        "off"
+      ]
     }
   }
 }

@@ -6,12 +6,13 @@
 // then ~/.claude/settings.json. Installing into the user file covers every folder
 // that doesn't define its own; `--file` targets one of the project files instead.
 // Each install remembers the command it wrapped, so several can coexist.
+import { spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { HOME, readJson, writeJsonAtomic } from './lib.mjs';
+import { HOME, logEvent, readJson, withLock, writeJsonAtomic } from './lib.mjs';
 
 export const STATE = path.join(HOME, 'statusline.json');
 const LAUNCHER = path.join(HOME, 'statusline-launcher.mjs');
@@ -123,7 +124,12 @@ export function statuslineStatus(cwd = process.cwd()) {
   };
 }
 
-export function installStatusline({ cwd = process.cwd(), file, placement, refreshSeconds = DEFAULT_REFRESH_SECONDS } = {}) {
+/**
+ * `overlay`: put ours in a personal settings.local.json that has no status line of
+ * its own, wrapping the shared project file's line (`wrap`). Uninstalling then just
+ * removes ours, and the shared file is never touched.
+ */
+export function installStatusline({ cwd = process.cwd(), file, placement, refreshSeconds = DEFAULT_REFRESH_SECONDS, overlay = false, wrap = null } = {}) {
   const target = path.resolve(file || userSettings());
   const settings = readJson(target, null) ?? (fs.existsSync(target) ? null : {});
   if (settings === null) throw new Error(`${target} is not valid JSON; not touching it`);
@@ -133,15 +139,15 @@ export function installStatusline({ cwd = process.cwd(), file, placement, refres
   const existing = settings.statusLine || null;
   const alreadyOurs = !!existing?.command?.includes(MARK);
   // Re-running install must not wrap our own launcher.
-  const wrapped = alreadyOurs ? state.installs[key]?.wrapped || null : existing;
+  const wrapped = alreadyOurs ? state.installs[key]?.wrapped || null : overlay ? wrap : existing;
 
   writeLauncher();
   state.pluginRoot = PLUGIN_ROOT;
-  state.installs[key] = { settingsFile: target, wrapped, placement: placement || state.installs[key]?.placement || 'append', installedAt: Date.now() };
+  state.installs[key] = { settingsFile: target, wrapped, overlay: overlay || state.installs[key]?.overlay || false, placement: placement || state.installs[key]?.placement || 'append', installedAt: Date.now() };
   saveState(state);
 
   if (!alreadyOurs && fs.existsSync(target)) fs.copyFileSync(target, `${target}.ccw-backup`);
-  const { command, refreshInterval, ...rest } = existing || {};
+  const { command, refreshInterval, ...rest } = (overlay ? null : existing) || {};
   settings.statusLine = {
     ...rest,
     type: 'command',
@@ -165,7 +171,7 @@ export function uninstallStatusline({ file } = {}) {
     if (!inst) continue;
     const settings = readJson(inst.settingsFile, null);
     if (settings?.statusLine?.command?.includes(MARK)) {
-      if (inst.wrapped) settings.statusLine = inst.wrapped;
+      if (inst.wrapped && !inst.overlay) settings.statusLine = inst.wrapped;
       else delete settings.statusLine;
       writeJsonAtomic(inst.settingsFile, settings);
     }
@@ -178,4 +184,55 @@ export function uninstallStatusline({ file } = {}) {
     fs.rmSync(LAUNCHER, { force: true });
   }
   return restored;
+}
+
+function gitIgnored(cwd, file) {
+  const r = spawnSync('git', ['-C', cwd, 'check-ignore', '-q', path.relative(cwd, file)], { timeout: 2000, windowsHide: true });
+  if (r.status === 0) return true; // ignored
+  if (r.status === 1) return false; // tracked or trackable: don't create files that could get committed
+  return !fs.existsSync(path.join(cwd, '.git')); // not a repository (or git missing)
+}
+
+/**
+ * Keep the segment on whatever status line a session will show, per the `statusline`
+ * setting. Runs on SessionStart (and when the setting changes). Only personal files
+ * are ever edited: the user settings and a project's settings.local.json. A status
+ * line defined in a project's shared settings.json gets an overlay in the git-ignored
+ * settings.local.json instead. A command you change later is wrapped again; `off`
+ * restores every original exactly.
+ */
+export function ensureStatusline({ mode = 'auto', cwd } = {}) {
+  try {
+    withLock(STATE, () => {
+      if (mode === 'off') {
+        if (Object.keys(loadState().installs).length) {
+          uninstallStatusline();
+          logEvent({ type: 'statusline', action: 'removed' });
+        }
+        return;
+      }
+      const has = (f) => !!readJson(f)?.statusLine?.command;
+      const ours = (f) => !!readJson(f)?.statusLine?.command?.includes(MARK);
+      const user = userSettings();
+      if (has(user) ? !ours(user) : mode === 'auto') {
+        installStatusline({ cwd, file: user });
+        logEvent({ type: 'statusline', action: 'wrapped', file: user });
+      }
+      if (!cwd) return;
+      const local = path.join(cwd, '.claude', 'settings.local.json');
+      const shared = path.join(cwd, '.claude', 'settings.json');
+      if (path.resolve(local) === path.resolve(user) || path.resolve(shared) === path.resolve(user)) return;
+      if (has(local)) {
+        if (!ours(local)) {
+          installStatusline({ cwd, file: local });
+          logEvent({ type: 'statusline', action: 'wrapped', file: local });
+        }
+      } else if (has(shared) && (fs.existsSync(local) ? readJson(local) !== null : true) && gitIgnored(cwd, local)) {
+        installStatusline({ cwd, file: local, overlay: true, wrap: readJson(shared).statusLine });
+        logEvent({ type: 'statusline', action: 'overlay', file: local });
+      }
+    });
+  } catch (err) {
+    logEvent({ type: 'statusline_error', message: String(err?.message || err) });
+  }
 }

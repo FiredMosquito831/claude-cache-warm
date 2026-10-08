@@ -23,10 +23,13 @@ import {
   resetScope,
   resolveSettings,
   sessionViews,
+  pluginOptionsFromSettings,
   setScoped,
+  startSelfTest,
   surfaceFromEntrypoint,
+  syncPluginOptions,
 } from './lib.mjs';
-import { DEFAULT_REFRESH_SECONDS, installStatusline, statuslineStatus, uninstallStatusline } from './statusline-install.mjs';
+import { DEFAULT_REFRESH_SECONDS, ensureStatusline, installStatusline, statuslineStatus, uninstallStatusline } from './statusline-install.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const [cmd = 'status', ...args] = process.argv.slice(2);
@@ -58,7 +61,10 @@ const HELP = `ccw ${VERSION} - keep Claude Code's prompt cache warm while a sess
     --session[=<id-prefix>]         one session (default: the session this shell belongs to)
   Most specific wins: session > project > surface > global > plugin tab > defaults.
 
+  ccw test                          self-test this session: one ping a minute after this turn ends,
+                                    checked against the transcript, then settings go back
   ccw dashboard [--no-open]         web dashboard: sessions, per-scope settings, analytics
+  ccw statusline auto|wrap-only|off   keep the segment on your status lines automatically, or remove it
   ccw statusline [install|uninstall] [--newline] [--refresh=<s>] [--file=<settings.json>]
                                     add the cache segment to your status line (wraps, never replaces).
                                     Default: user settings, so every folder gets it; refresh every 5 s
@@ -117,7 +123,7 @@ function parseValue(key, raw) {
   if (raw === 'inherit' || raw === 'unset') return null;
   if (key === 'enabled') return raw === 'true' || raw === 'on';
   if (key === 'intervalMinutes' && raw === 'auto') return 'auto';
-  if (key === 'warmWhen') return raw;
+  if (key === 'warmWhen' || key === 'statusline') return raw;
   return Number(raw);
 }
 
@@ -138,6 +144,7 @@ const STATUS_HINT = {
   'small-context': 'context too small to be worth warming',
   'idle-cap': 'idle cap reached, pings stopped',
   'ping-cap': 'ping cap reached, pings stopped',
+  suspended: 'suspended: pings were missing the cache (resumes when you are active again)',
   expired: 'cache already expired, not re-writing it',
   ended: 'session ended',
 };
@@ -180,6 +187,8 @@ function printStatus() {
     const scoped = Object.entries(v.sources).filter(([, src]) => !['default', 'plugin tab', 'global'].includes(src));
     if (scoped.length) console.log(`    scoped: ${scoped.map(([k, src]) => `${k}=${v.settings[k]} (${src})`).join(', ')}`);
     if (v.warning) console.log(`    warning: ${v.warning}`);
+    if (v.test) console.log('    self-test running: a ping is due one minute after the turn ends');
+    if (v.testResult) console.log(`    last self-test: ${v.testResult.result} (${new Date(v.testResult.at).toLocaleString()})`);
     console.log(`    ${v.cwd || ''}`);
   }
 }
@@ -222,6 +231,12 @@ function doctor() {
   ok(views.some((v) => v.work.known) || !views.length, 'Claude Code reports background tasks to the Stop hook (needs a recent Claude Code)');
   const pings = events.filter((e) => e.type === 'ping');
   ok(null, `${pings.length} ping(s) in the last 24h (${pings.filter((e) => e.engine === 'rewake').length} from 0.3 wakers)`);
+  const results = events.filter((e) => e.type === 'ping_result');
+  for (const surface of ['cli', 'desktop', 'ide']) {
+    const r = results.filter((e) => (e.surface || 'cli') === surface);
+    if (r.length) ok(r.every((e) => e.result !== 'miss'), `${surface}: ${r.filter((e) => e.result === 'hit').length}/${r.length} recent pings verified as cache reads`);
+  }
+  if (!results.length) ok(null, 'no ping verified yet; run `ccw test` in a session (CLI and desktop app) to check end to end');
   const legacy = events.filter((e) => e.type === 'legacy_cron_cleanup').length;
   if (legacy) ok(null, `${legacy} leftover 0.2 cron task(s) asked to delete themselves`);
   if (thisSession) ok(!!loadSession(thisSession), `this session (${thisSession.slice(0, 8)}) is registered`);
@@ -246,7 +261,10 @@ function fail(msg) {
 
 try {
   // Settings commands work on the 0.3 layout; status line, events and help don't need it.
-  if (!['statusline', 'events', 'help', '--help', '-h', 'cron-tick'].includes(cmd)) ensureMigrated();
+  if (!['statusline', 'events', 'help', '--help', '-h', 'cron-tick'].includes(cmd)) {
+    ensureMigrated();
+    syncPluginOptions(pluginOptionsFromSettings()); // plugin-tab edits show up immediately
+  }
   switch (cmd) {
     case 'status':
       printStatus();
@@ -290,8 +308,29 @@ try {
     case 'dashboard':
       dashboard();
       break;
+    case 'test': {
+      const scoped = explicitScope();
+      const id = scoped?.startsWith('session:') ? scoped.slice(8) : thisSession;
+      if (!id) throw new Error('run this inside a Claude Code session (or pass --session=<id-prefix>)');
+      startSelfTest(id);
+      console.log(`self-test armed for session ${id.slice(0, 8)}:`);
+      console.log('  1. let this turn end and do not type for about a minute');
+      console.log('  2. a "Stop hook feedback" keep-alive note arrives and Claude replies ok');
+      console.log('  3. the ping is checked against the transcript (cache read = pass) and this');
+      console.log("     session's settings go back to what they were. See the result with: ccw status");
+      console.log('  Nothing within ~2 minutes means asyncRewake is not waking this surface; settings restore after 15 min.');
+      break;
+    }
     case 'statusline': {
       const fileFlag = args.find((a) => a.startsWith('--file='));
+      if (['auto', 'wrap-only', 'off', 'on'].includes(positional[0])) {
+        ensureMigrated();
+        const mode = positional[0] === 'on' ? 'auto' : positional[0];
+        setScoped('global', { statusline: mode });
+        ensureStatusline({ mode, cwd: process.cwd() });
+        console.log(mode === 'off' ? 'status line segment off; every original status line restored' : `status line segment: ${mode}. Kept up to date at every session start.`);
+        break;
+      }
       const refreshFlag = args.find((a) => a.startsWith('--refresh='));
       if (positional[0] === 'install') {
         const r = installStatusline({
@@ -305,6 +344,11 @@ try {
         for (const f of r.shadowedBy) console.log(`note: ${f} has its own statusLine, which wins in that folder; add the segment there too with --file="${f}"`);
       } else if (positional[0] === 'uninstall') {
         for (const r of uninstallStatusline({ file: fileFlag?.slice(7) })) console.log(`removed from ${r.settingsFile}; ${r.restored ? `restored: ${r.restored}` : 'no status line configured there now'}`);
+        if (!fileFlag) {
+          ensureMigrated();
+          setScoped('global', { statusline: 'off' }); // otherwise auto mode puts it back at the next session start
+          console.log('statusline setting is now off (ccw statusline auto to turn it back on)');
+        }
       } else {
         const s = statuslineStatus();
         if (!s.installs.length) console.log('not installed (ccw statusline install)');

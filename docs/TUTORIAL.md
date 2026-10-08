@@ -74,7 +74,11 @@ Reading a row: session id (`*` = the one you're in), surface, state, context siz
 | `expired` | The cache already timed out; nothing left to keep warm |
 | `small-context` | Below `minContextTokens` |
 
-`ccw doctor` runs the health checks in one go.
+`ccw doctor` runs the health checks in one go, including how many recent pings were verified as cache reads on each surface.
+
+**Self-test.** Run `/cache-warm:test` (or `ccw test`) in any session, CLI or Desktop app, then don't type for a minute. A keep-alive note arrives, Claude answers `ok`, the ping is checked against the transcript, and the session's settings go back to what they were. `ccw status` then shows `last self-test: hit`. If nothing arrives within two minutes, that surface isn't waking sessions (settings restore by themselves after 15 minutes).
+
+**Ping verification.** Every ping is judged once its turn reaches the transcript: a cache read is a hit, a re-write is a miss. Two misses in a row suspend warming for that session (`suspended` in `status`) until you are active in it again.
 
 ## 4. Scopes: global, surface, project, session
 
@@ -145,6 +149,8 @@ ccw set minContextTokens 50000
 ccw unset intervalMinutes --desktop  # back to inheriting
 ```
 
+Plugin-tab edits apply right away (through Claude Code's `ConfigChange` hook); timers that are already sleeping pick them up within a minute.
+
 **Interval.** Counted from the conversation's last request, and must be shorter than the cache TTL or pings land too late. `auto` reads the TTL from the session's own transcript. A `warning:` line in `status` means a fixed interval is too long for that session.
 
 **Get the 1-hour TTL first.** It turns 15 pings an hour into 1. A Claude subscription gets it automatically inside plan limits. With an API key, or to keep it on usage credits, add `"promptCacheTtl": "1h"` to your Claude Code settings.
@@ -172,6 +178,16 @@ or `ccw dashboard`. It starts a small local server (loopback only) and opens the
 - *Where the cache dies*: your pauses by length, survived vs rebuilt.
 
 ## 9. The status line
+
+It's on by default and maintained automatically (setting `statusline`, global only):
+
+| Value | What happens at each session start |
+| :--- | :--- |
+| `auto` (default) | The segment is added to the status line the session will show; if you have none, one is created in your user settings |
+| `wrap-only` | Only existing status lines get the segment |
+| `off` | Every original status line is restored exactly, and stays that way |
+
+Change it with `ccw statusline auto|wrap-only|off`, the plugin tab, or the dashboard's Global tab. Only personal files are edited: your user settings and a project's `settings.local.json`. A status line in a project's shared `settings.json` is never touched; the segment goes into a git-ignored `settings.local.json` overlay instead. Change your own status line later and the next session start wraps the new one.
 
 ```text
 /cache-warm:statusline
@@ -268,6 +284,7 @@ The tray menu drives the global scope (on/off, background-work only, interval); 
 | `/cache-warm:on [scope]` | `ccw on [scope]` | Enable |
 | `/cache-warm:off [scope]` | `ccw off [scope]` | Disable |
 | `/cache-warm:status` | `ccw status [--all] [--json]` | Sessions and countdowns |
+| `/cache-warm:test` | `ccw test` | Self-test this session end to end |
 | `/cache-warm:dashboard` | `ccw dashboard [--no-open]` | Web dashboard |
 | `/cache-warm:statusline [install\|newline\|uninstall]` | `ccw statusline …` | Status line segment |
 | `/cache-warm:config …` | | Natural-language settings |

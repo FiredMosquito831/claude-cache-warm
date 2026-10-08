@@ -19,8 +19,11 @@ import {
   resolveIntervalMinutes,
   resolveSettings,
   sessionViews,
+  pluginOptionsFromSettings,
   setScoped,
+  syncPluginOptions,
 } from '../scripts/lib.mjs';
+import { ensureStatusline } from '../scripts/statusline-install.mjs';
 import { computeAnalytics } from './analytics.mjs';
 
 const PUBLIC = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
@@ -73,6 +76,7 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === 'GET' && url.pathname === '/api/state') {
       const now = Date.now();
+      syncPluginOptions(pluginOptionsFromSettings());
       const config = loadConfigFile();
       const tab = pluginTabLayers();
       // Every scope's own settings plus what it inherits, so the UI can show both.
@@ -107,6 +111,7 @@ const server = http.createServer(async (req, res) => {
         if (String(body.scope || '').startsWith('session:') && !loadSession(body.scope.slice(8))) return send(res, 404, { error: 'unknown session' });
         if (body.reset) resetScope(body.scope);
         else setScoped(body.scope, body.patch || {});
+        if (body.scope === 'global' && (body.reset || (body.patch && 'statusline' in body.patch))) ensureStatusline({ mode: resolveSettings({}).values.statusline });
         return send(res, 200, { ok: true });
       } catch (err) {
         return send(res, 400, { error: err.message });

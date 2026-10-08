@@ -8,7 +8,7 @@ const homeArg = process.argv.find((a) => a.startsWith('--home='));
 if (homeArg) process.env.CCW_HOME = homeArg.slice(7);
 
 const lib = await import('./lib.mjs');
-const { refreshStatuslineLauncher } = await import('./statusline-install.mjs');
+const { ensureStatusline, refreshStatuslineLauncher } = await import('./statusline-install.mjs');
 
 function readStdin() {
   return new Promise((resolve) => {
@@ -53,6 +53,7 @@ async function main() {
     case 'SessionStart': {
       lib.syncPluginOptions(process.env);
       refreshStatuslineLauncher();
+      ensureStatusline({ mode: lib.resolveSettings({}).values.statusline, cwd: input.cwd });
       pruneOccasionally(now);
       // A new process (startup/resume/fork) has no background work yet; /clear and /compact keep the process.
       const freshProcess = input.source === 'startup' || input.source === 'resume' || input.source === 'fork';
@@ -70,8 +71,16 @@ async function main() {
       break;
     }
 
+    case 'ConfigChange':
+      // A settings file changed: pick up plugin-tab edits now, not at the next session start.
+      if (lib.syncPluginOptions(lib.pluginOptionsFromSettings()).includes('statusline')) {
+        ensureStatusline({ mode: lib.resolveSettings({}).values.statusline, cwd: input.cwd });
+      }
+      break;
+
     case 'UserPromptSubmit': {
       const kind = lib.classifyPrompt(input.prompt);
+      lib.expireSelfTest(lib.loadSession(id), now);
       // A turn is starting: whatever timer was sleeping stands down. The next Stop starts a fresh one.
       lib.supersedeWaker(id, 'turn');
       lib.updateSession(id, (s) => ({

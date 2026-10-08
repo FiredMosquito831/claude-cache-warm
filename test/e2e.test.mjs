@@ -20,7 +20,10 @@ process.env.CCW_HOME = home;
 process.env.CCW_PROJECTS_DIR = projects;
 const lib = await import('../scripts/lib.mjs');
 
-const baseEnv = { ...process.env, CCW_HOME: home, CCW_PROJECTS_DIR: projects, CLAUDE_PID: String(process.pid), CCW_POLL_MS: '100' };
+const claudeHome = path.join(tmp, 'claude-home'); // never the real ~/.claude: hooks now manage the status line
+fs.mkdirSync(claudeHome, { recursive: true });
+process.env.CLAUDE_CONFIG_DIR = claudeHome;
+const baseEnv = { ...process.env, CCW_HOME: home, CCW_PROJECTS_DIR: projects, CLAUDE_PID: String(process.pid), CCW_POLL_MS: '100', CLAUDE_CONFIG_DIR: claudeHome };
 for (const k of Object.keys(baseEnv)) if (k.startsWith('CLAUDE_PLUGIN_OPTION_') || k === 'FORCE_PROMPT_CACHING_5M') delete baseEnv[k];
 delete baseEnv.CLAUDE_CODE_SESSION_ID;
 delete baseEnv.CLAUDE_CODE_ENTRYPOINT; // the runner may itself be inside a Claude Code session
@@ -405,4 +408,85 @@ test('analytics dedupes repeated usage lines, finds a cold rebuild, and parses i
   const before = a.totals.requests;
   fs.appendFileSync(file, usageLine('an-1', Date.now(), { read: 101_000, write: 200, msg: 'd' }));
   assert.equal((await computeAnalytics({ days: 1 })).totals.requests, before + 1);
+});
+
+test('self-test: one ping a minute after the turn, verified against the transcript, settings restored', async () => {
+  ccw('set', 'maxIdleMinutes', '45', '--session=cli-1');
+  const before = readJson(sessionFile('cli-1')).overrides;
+  assert.equal(ccw('test', '--session=cli-1').status, 0);
+  assert.equal(status('cli-1').settings.intervalMinutes, 1);
+  assert.equal(status('cli-1').settings.warmWhen, 'always');
+  const r = await runWaker('cli-1', { whileSleeping: () => age('cli-1', 2) });
+  assert.equal(r.code, 2, 'pinged without any background work');
+  // Claude answers "ok": that turn reads the cache, then its Stop starts the next waker, which judges the ping
+  fs.appendFileSync(transcriptOf('cli-1'), usageLine('cli-1', Date.now(), { read: 199_000, write: 300, msg: 'okturn' }));
+  await runWaker('cli-1', { lifetimeMs: 600 });
+  const s = readJson(sessionFile('cli-1'));
+  assert.equal(s.test, null);
+  assert.equal(s.testResult.result, 'hit');
+  assert.deepEqual(s.overrides, before, 'settings restored exactly');
+  assert.equal(readJson(stateFile('cli-1')).lastPing.result, 'hit');
+  ccw('reset', '--session=cli-1');
+});
+
+test('pings that miss the cache twice in a row suspend warming until someone is active', () => {
+  const session = readJson(sessionFile('cli-1'));
+  for (let i = 0; i < 2; i++) {
+    const t = Date.now();
+    lib.updateState('cli-1', (st) => ({ ...st, lastPing: { at: t - 2000, result: null } }));
+    fs.appendFileSync(transcriptOf('cli-1'), usageLine('cli-1', t, { read: 1000, write: 199_000, msg: 'miss' + i }));
+    assert.equal(lib.verifyLastPing('cli-1', session), 'miss');
+  }
+  const st = readJson(stateFile('cli-1'));
+  assert.ok(st.suspended, 'suspended after 2 misses');
+  ccw('when', 'always', '--session=cli-1');
+  assert.equal(status('cli-1').status, 'suspended');
+  hook('UserPromptSubmit', 'cli-1', { prompt: 'back again', cwd: projB });
+  assert.notEqual(status('cli-1').status, 'suspended', 'activity resumes warming');
+  ccw('reset', '--session=cli-1');
+});
+
+test('plugin-tab edits apply right away through ConfigChange, without a new session', () => {
+  const settings = path.join(claudeHome, 'settings.json');
+  const cur = fs.existsSync(settings) ? readJson(settings) : {};
+  fs.writeFileSync(settings, JSON.stringify({ ...cur, pluginConfigs: { 'cache-warm@claude-cache-warm': { options: { interval_minutes: '33', max_idle_minutes: 70 } } } }));
+  hook('ConfigChange', 'cli-1', { source: 'user_settings', cwd: projB });
+  assert.equal(status('cli-1').settings.intervalMinutes, 33);
+  assert.equal(status('cli-1').sources.intervalMinutes, 'plugin tab');
+  fs.writeFileSync(settings, JSON.stringify({ ...cur, pluginConfigs: { 'cache-warm@claude-cache-warm': { options: { interval_minutes: '50', max_idle_minutes: 70 } } } }));
+  hook('ConfigChange', 'cli-1', { source: 'user_settings', cwd: projB });
+  assert.equal(status('cli-1').settings.intervalMinutes, 50);
+});
+
+test('automatic status line: wraps on session start, overlays a shared project line, off restores everything', () => {
+  const settings = path.join(claudeHome, 'settings.json');
+  ccw('unset', 'statusline', '--global'); // the earlier test's uninstall switched the setting off; back to the default (auto)
+  const original = { ...readJson(settings), statusLine: { type: 'command', command: 'echo MINE' } };
+  fs.writeFileSync(settings, JSON.stringify(original));
+  const proj = path.join(tmp, 'shared-proj');
+  fs.mkdirSync(path.join(proj, '.claude'), { recursive: true });
+  const sharedFile = path.join(proj, '.claude', 'settings.json');
+  fs.writeFileSync(sharedFile, JSON.stringify({ statusLine: { type: 'command', command: 'echo TEAM' } }));
+  writeTranscript('sl-1', 0);
+
+  hook('SessionStart', 'sl-1', { source: 'startup', cwd: proj });
+  assert.match(readJson(settings).statusLine.command, /statusline-launcher\.mjs" user$/, 'user status line wrapped automatically');
+  const local = path.join(proj, '.claude', 'settings.local.json');
+  assert.match(readJson(local).statusLine.command, /statusline-launcher\.mjs/, 'shared project line gets a personal overlay');
+  assert.equal(readJson(sharedFile).statusLine.command, 'echo TEAM', 'the shared project file is never edited');
+  const sl = readJson(path.join(home, 'statusline.json'));
+  assert.equal(sl.installs.user.wrapped.command, 'echo MINE');
+  assert.equal(Object.values(sl.installs).find((i) => i.overlay).wrapped.command, 'echo TEAM');
+
+  // You change your own status line later: the next session start wraps the new one.
+  fs.writeFileSync(settings, JSON.stringify({ ...readJson(settings), statusLine: { type: 'command', command: 'echo NEWER' } }));
+  hook('SessionStart', 'sl-1', { source: 'clear', cwd: proj });
+  assert.equal(readJson(path.join(home, 'statusline.json')).installs.user.wrapped.command, 'echo NEWER');
+
+  const r = spawnSync(process.execPath, [path.join(ROOT, 'scripts/ccw.mjs'), 'statusline', 'off'], { env: baseEnv, encoding: 'utf8', cwd: proj });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(readJson(settings).statusLine.command, 'echo NEWER', 'your own line restored');
+  assert.equal(readJson(local).statusLine, undefined, 'overlay removed');
+  hook('SessionStart', 'sl-1', { source: 'clear', cwd: proj });
+  assert.equal(readJson(settings).statusLine.command, 'echo NEWER', 'off stays off across session starts');
 });
