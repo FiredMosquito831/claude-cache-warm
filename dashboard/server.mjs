@@ -4,11 +4,28 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { VERSION, loadConfig, loadSession, resolveIntervalMinutes, saveConfig, sessionViews, setSessionOverrides } from '../scripts/lib.mjs';
+import {
+  DEFAULTS,
+  GLOBAL_ONLY_KEYS,
+  SCOPED_KEYS,
+  SURFACES,
+  VERSION,
+  ensureMigrated,
+  listSessions,
+  loadConfigFile,
+  loadSession,
+  pluginTabLayers,
+  resetScope,
+  resolveIntervalMinutes,
+  resolveSettings,
+  sessionViews,
+  setScoped,
+} from '../scripts/lib.mjs';
 import { computeAnalytics } from './analytics.mjs';
 
 const PUBLIC = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
-const port = Number(process.env.CCW_PORT) || loadConfig().dashboardPort;
+ensureMigrated();
+const port = Number(process.env.CCW_PORT) || resolveSettings({}).values.dashboardPort;
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' };
 
 function send(res, code, body, type = 'application/json; charset=utf-8') {
@@ -56,15 +73,24 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === 'GET' && url.pathname === '/api/state') {
       const now = Date.now();
-      return send(res, 200, { config: loadConfig(), sessions: sessionViews(now), now, version: VERSION });
+      const config = loadConfigFile();
+      const tab = pluginTabLayers();
+      // Every scope's own settings plus what it inherits, so the UI can show both.
+      const scopes = [
+        { scope: 'global', label: 'Global', own: config.global, ...resolveSettings({}, config, tab) },
+        ...SURFACES.map((s) => ({ scope: s, label: { cli: 'CLI', desktop: 'Desktop app', ide: 'IDE' }[s], own: config.surfaces[s] || {}, ...resolveSettings({ surface: s }, config, tab) })),
+        ...Object.keys(config.projects).map((p) => ({ scope: `project:${p}`, label: p, own: config.projects[p], ...resolveSettings({ cwd: p }, config, tab) })),
+      ];
+      const folders = [...new Set(listSessions().map((s) => s.cwd).filter(Boolean))];
+      return send(res, 200, { now, version: VERSION, defaults: DEFAULTS, keys: { scoped: SCOPED_KEYS, globalOnly: GLOBAL_ONLY_KEYS }, pluginTab: tab.raw, scopes, folders, sessions: sessionViews(now) });
     }
 
     if (req.method === 'GET' && url.pathname === '/api/analytics') {
       const days = Math.min(90, Math.max(1, Number(url.searchParams.get('days')) || 7));
-      const config = loadConfig();
+      const { values } = resolveSettings({});
       const key = `${days}`;
       if (!analyticsInFlight || analyticsInFlight.key !== key) {
-        const promise = computeAnalytics({ days, maxIdleMinutes: config.maxIdleMinutes, intervalFor: (ttl) => resolveIntervalMinutes(config, ttl) }).finally(() => {
+        const promise = computeAnalytics({ days, maxIdleMinutes: values.maxIdleMinutes, intervalFor: (ttl) => resolveIntervalMinutes(values, ttl) }).finally(() => {
           if (analyticsInFlight?.promise === promise) analyticsInFlight = null;
         });
         analyticsInFlight = { key, promise };
@@ -72,22 +98,37 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, await analyticsInFlight.promise);
     }
 
-    if (req.method === 'POST' && url.pathname === '/api/config') {
+    // { scope: "global" | "cli" | "desktop" | "ide" | "project:<folder>" | "session:<id>", patch: {...} }
+    // A null value clears that setting at that scope; { reset: true } clears the whole scope.
+    if (req.method === 'POST' && url.pathname === '/api/scope') {
       if (!writeAllowed(req)) return send(res, 403, { error: 'forbidden' });
       try {
-        return send(res, 200, saveConfig(await readBody(req)));
+        const body = await readBody(req);
+        if (String(body.scope || '').startsWith('session:') && !loadSession(body.scope.slice(8))) return send(res, 404, { error: 'unknown session' });
+        if (body.reset) resetScope(body.scope);
+        else setScoped(body.scope, body.patch || {});
+        return send(res, 200, { ok: true });
       } catch (err) {
         return send(res, 400, { error: err.message });
       }
     }
 
+    // 0.2 API, kept for the tray app and scripts: global patch / session patch.
+    if (req.method === 'POST' && url.pathname === '/api/config') {
+      if (!writeAllowed(req)) return send(res, 403, { error: 'forbidden' });
+      try {
+        setScoped('global', await readBody(req));
+        return send(res, 200, resolveSettings({}).values);
+      } catch (err) {
+        return send(res, 400, { error: err.message });
+      }
+    }
     const m = url.pathname.match(/^\/api\/sessions\/([A-Za-z0-9_-]{1,128})$/);
     if (req.method === 'POST' && m) {
       if (!writeAllowed(req)) return send(res, 403, { error: 'forbidden' });
       if (!loadSession(m[1])) return send(res, 404, { error: 'unknown session' });
       try {
-        // { enabled, intervalMinutes, maxIdleMinutes }; null clears an override.
-        setSessionOverrides(m[1], await readBody(req));
+        setScoped(`session:${m[1]}`, await readBody(req));
         return send(res, 200, { ok: true });
       } catch (err) {
         return send(res, 400, { error: err.message });

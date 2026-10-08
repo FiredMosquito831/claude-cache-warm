@@ -1,21 +1,22 @@
 # claude-cache-warm
 
-Keeps the prompt cache of **idle Claude Code sessions** warm, so coming back from a break doesn't cost a full-price rewrite of your whole context.
+Keeps the prompt cache of **idle Claude Code sessions** warm, so coming back to a session doesn't cost a full-price rewrite of its whole context.
 
-- **Plugin** for Claude Code: on/off switch, configurable interval, idle cap, per-session overrides. By default it only warms sessions that are waiting on a subagent or background task.
-- **Status line segment**: warming state, context tokens, cached tokens, time until the cache expires. Wraps your existing status line instead of replacing it.
-- **Dashboard** (local web UI): live sessions with ping countdowns, per-session settings, and analytics mined from your own transcripts: hit ratio, cold rebuilds, what warming would have saved.
-- **Tray app** (Tauri, optional): global hotkeys (`Ctrl+Alt+W` toggle, `Ctrl+Alt+D` dashboard), toggle and interval from the system tray.
+- **Plugin** for Claude Code. Works the same in the CLI, the IDE extensions and the Desktop app.
+- **Scoped settings**: global, per surface (CLI / Desktop app / IDE), per project folder, per session. Anything unset inherits.
+- **Status line segment**: warming state, ping countdown, context and cached tokens, time until the cache expires. Wraps your existing status line instead of replacing it.
+- **Dashboard** (local web UI): live sessions, every scope's settings, analytics mined from your own transcripts.
+- **Tray app** (Tauri, optional): global hotkeys and a tray toggle.
 
-**New here? Read the [usage tutorial](docs/TUTORIAL.md).**
+**New here? Read the [usage tutorial](docs/TUTORIAL.md).** Upgrading from 0.2: see [what changed](#upgrading-from-02).
 
-Zero runtime dependencies. Node 18+.
+Zero runtime dependencies. Node 18+. Needs a Claude Code recent enough to pass `background_tasks` to Stop hooks and to support `asyncRewake` hooks (2.1.29x has both).
 
 ## Why
 
-Claude Code re-sends the whole conversation on every turn; the API's prompt cache makes that cheap (a cache read is 0.1x input price, 0.025x on Fable 5.1). But the cache expires after a period of silence: **5 minutes** on an API key, **1 hour** on a Claude subscription or with `CLAUDE_CODE_PROMPT_CACHE_TTL=1h`. The first turn after expiry re-writes everything at 1.25x (5m) or 2x (1h) input price, and is slow.
+Claude Code re-sends the whole conversation on every turn; the prompt cache makes that cheap (a cache read is 0.1x input price, 0.025x on Fable 5.1). But the cache expires after a period of silence: **5 minutes** on an API key, **1 hour** on a Claude subscription or with `CLAUDE_CODE_PROMPT_CACHE_TTL=1h`. The first turn after expiry re-writes everything at 1.25x (5m) or 2x (1h) input price, and is slow.
 
-Every cache hit resets the timer. So one tiny turn shortly before expiry keeps a big context alive for a fraction of the rebuild cost:
+Every cache hit resets the timer. One tiny turn shortly before expiry keeps a big context alive for a fraction of the rebuild:
 
 | 800K-token context on Opus 5, 1h cache | Cost |
 | :--- | ---: |
@@ -29,121 +30,141 @@ Every cache hit resets the timer. So one tiny turn shortly before expiry keeps a
 /plugin install cache-warm@claude-cache-warm
 ```
 
-Start a new session. That's it: warming is on, with `auto` interval, for sessions that are waiting on background work.
-
-Local development: `claude --plugin-dir "path/to/claude cache warm"`.
-
-## Use
-
-| In Claude Code | Shell (`bin/ccw` is on the Bash tool's PATH) | |
-| :--- | :--- | :--- |
-| `/cache-warm:on` | `ccw on` | Master switch on |
-| `/cache-warm:off` | `ccw off` | Master switch off |
-| `/cache-warm:off session` | `ccw off --session` | Pause only this session (`ccw follow` to undo) |
-| `/cache-warm:status` | `ccw status` | Sessions, next-ping countdown, cost per ping |
-| | `ccw when always` | Warm any idle session, not only ones with background work (`background-work` is the default) |
-| `/cache-warm:config interval 30` | `ccw interval 30` | Ping interval in minutes, or `auto` |
-| `/cache-warm:config idle 240` | `ccw set maxIdleMinutes 240` | Stop pinging after this long away (0 = never) |
-| `/cache-warm:dashboard` | `ccw dashboard` | Open `http://127.0.0.1:4777/` (live sessions, per-session settings, analytics) |
-| `/cache-warm:statusline` | `ccw statusline install` | Add the status line segment (`uninstall` restores the previous one) |
-| | `ccw interval 20 --session` | Any of `on`, `off`, `when`, `interval`, `set maxIdleMinutes` for one session only; `ccw follow` clears |
-| | `ccw doctor` | Check that hooks and the monitor are alive |
-
-Every change applies to running sessions within 5 seconds. Nothing needs a restart.
-
-### Settings
-
-| Setting | Default | Meaning |
-| :--- | :--- | :--- |
-| `enabled` | `true` | Master switch |
-| `warmWhen` | `background-work` | `background-work`: only while a subagent or background shell command is running in the session. `always`: any idle session |
-| `intervalMinutes` | `auto` | `auto` = 50 on a 1h cache, 4 on a 5m cache (detected from the transcript). Must be shorter than the TTL. |
-| `maxIdleMinutes` | `180` | Stop pinging once you've been away this long |
-| `minContextTokens` | `20000` | Small contexts are cheap to rebuild; skip them |
-| `fallbackCron` | `true` | When a session has no monitor process, ask Claude once (via a Stop hook) to schedule an in-session keep-alive task instead |
-| `engine` | `monitor` | `monitor` or `cron` (see below) |
-| `dashboardPort` | `4777` | |
-
-Stored in `~/.claude-cache-warm/config.json` (override the directory with `CCW_HOME`). The same settings are exposed in the plugin's options (`/plugin` → cache-warm → configure); a value changed there is applied at the next session start without overwriting edits made elsewhere.
+Start a new session (or run `/reload-plugins`). Defaults: warming on, interval `auto` (50 minutes on a 1-hour cache), only for sessions that are waiting on background work.
 
 ## How it works
 
 ```
-hooks (SessionStart / UserPromptSubmit / Stop / SubagentStart / SubagentStop / PostToolUse / SessionEnd)
-   └─ write activity + background-work markers ─┐
-                                         ▼
-                          ~/.claude-cache-warm/   ◄── ccw CLI, dashboard, tray app edit config.json
-                                         ▲
-plugin monitor (one process per session) ┘
-   every 5s: silent for >= interval?  ──► prints one line to stdout
-                                            └─ Claude Code delivers it to the idle session as a
-                                               notification → a one-word turn → cache read → TTL reset
+Stop hook (asyncRewake)                                  UserPromptSubmit hook
+  every turn end starts one "waker" for that session       a new turn starts: the sleeping
+  │ records: turn ended, what's running in the background  waker stands down. The next turn
+  │ (Claude Code's own background_tasks / session_crons)   end starts a fresh one.
+  ▼
+  sleeps until  last request + interval
+  │ re-checks: still idle? background work pending? settings for THIS session?
+  ▼
+  exit 2  ──►  Claude Code wakes the idle session and shows Claude one line
+               → Claude answers "ok" → one cache read of the whole context → TTL reset
 ```
 
-The ping goes **through the live session itself**, so it hits exactly the same cache prefix (same system prompt, tools, history). An external `claude -p --resume` or a raw API call can't guarantee that.
+- **The timer restarts on every request.** A prompt you type, a background agent reporting back, a scheduled task firing: each one supersedes the sleeping waker, and the next turn end starts a new one. A session in use is never pinged, and nothing fires mid-turn.
+- **Nothing is shared between sessions.** Each session has its own waker and resolves its own settings. A Desktop session can't change how a CLI session behaves, and neither can switch an engine for everyone. There is no engine to switch.
+- **No scheduled tasks, no monitor process.** It's an ordinary hook, so it runs identically wherever Claude Code runs hooks.
 
-It is **activity-aware**. The timer counts from the last request of the main conversation, so a session you are actively using is never pinged. It also refuses to ping when:
+It refuses to ping when:
 
-- nothing is running in the background (default `warmWhen: background-work`; subagents are tracked through `SubagentStart`/`SubagentStop`, background shell commands through `PostToolUse`),
+- nothing is pending in the background (default `warmWhen: background-work`: a running subagent, background shell, workflow or scheduled task),
 - the cache has already expired (laptop slept: a ping would *be* the expensive rewrite),
-- you've been away longer than `maxIdleMinutes`,
+- nobody has typed and no real work has happened for `maxIdleMinutes`,
+- it has already pinged `ceil(maxIdleMinutes / interval) + 1` times since the last activity (hard cap 24),
 - the context is below `minContextTokens`,
-- warming is off globally or for that session.
+- warming is off for that session's scope,
+- the session is headless (`claude -p`, Agent SDK): those are never registered.
 
-Keep-alive turns don't reset the idle clock, so pings can't keep their own session "active" forever.
+Keep-alive turns, scheduled-task prompts and background-task reports don't count as you being active, so the idle cap really means "nobody has been here".
 
-### Engines
+## Settings and scopes
 
-| | `monitor` (default) | `cron` (fallback) |
+| Setting | Default | Meaning |
 | :--- | :--- | :--- |
-| Mechanism | Plugin [monitor](https://code.claude.com/docs/en/plugins-reference#monitors) process | In-session `CronCreate` task |
-| Timing | Exact, from last activity | Fixed schedule with jitter; fires even while you're active |
-| Live config | Yes | Interval fixed at creation |
-| Lifetime | Whole session | Expires after 7 days |
-| Works in | Interactive CLI sessions | Anywhere scheduled tasks work, including the desktop app |
+| `enabled` | `true` | On/off |
+| `warmWhen` | `background-work` | `background-work`: only while something is pending in the background. `always`: any idle session |
+| `intervalMinutes` | `auto` | From the last request. `auto` = 50 on a 1h cache, 4 on a 5m cache. Must be shorter than the TTL |
+| `maxIdleMinutes` | `180` | Stop after this long with no activity. 0 = never |
+| `minContextTokens` | `20000` | Small contexts are cheap to rebuild; skip them |
+| `dashboardPort` | `4777` | Global only |
 
-Plugin monitors are an experimental Claude Code feature and only run in interactive CLI sessions. In practice they did not start for a `claude --resume` session either. That is why the fallback exists: when a session has no monitor heartbeat and something needs warming, the Stop hook asks Claude once to `CronCreate` a keep-alive task (one tool call). That task runs `ccw cron-tick`, which reports STOP once there is nothing left to warm, and Claude deletes it. After your first real idle period, `ccw doctor` and the dashboard's "Pings sent" tile (n/m verified as cache hits) confirm that pings are landing on a warm cache. If `ccw status` shows `[no monitor]`, run `/cache-warm:config engine cron`.
+Each session resolves every setting from the most specific scope that sets it:
 
-## Picking an interval
+```
+session  >  project folder  >  surface (cli | desktop | ide)  >  global  >  plugin tab  >  defaults
+```
 
-1. **Get the 1-hour TTL first.** It turns 15 pings an hour into 1. Subscriptions get it automatically; with an API key set `"promptCacheTtl": "1h"` in settings or `CLAUDE_CODE_PROMPT_CACHE_TTL=1h`. If you go over plan limits into usage credits, Claude Code falls back to 5m unless you set it explicitly.
-2. **Leave the interval on `auto`.** Shorter than needed just wastes reads; longer than the TTL does nothing.
-3. **Decide who gets warmed.** The default only covers sessions waiting on background work, where you are certain to come back. `ccw when always` extends it to every idle session; check the dashboard's cold-rebuild table first to see whether your pauses justify it.
-4. **Set the idle cap from break-even.** Pings stop paying off once you've spent more on them than the rebuild would cost: about 19 pings (~16 h) on a 1h cache, about 11 pings (~45 min) on a 5m cache. On Fable 5.1 reads are 4x cheaper, so break-even is ~4x later. The default of 3 h is conservative; the dashboard's "Recent cold rebuilds" table shows what your real pauses look like.
+```sh
+ccw interval 30                       # global
+ccw when always --desktop             # every Desktop-app session
+ccw off --cli                         # every CLI session
+ccw interval 20 --project             # this folder and everything below it
+ccw set maxIdleMinutes 600 --session  # just this session
+ccw config --session                  # effective values, and which scope each comes from
+ccw reset --desktop                   # that scope inherits everything again
+```
 
-## Costs and caveats
+The plugin tab (`/plugin` → cache-warm → configure) sets the global layer plus a "Desktop app sessions" override. A value you change there is applied at the next session start and wins over the older override it would otherwise sit behind; values you didn't change never undo edits made with `ccw` or the dashboard.
 
-- A ping is a real model turn: one cache read of the full context plus a few output tokens. On a subscription it counts against your usage limits. `ccw status` shows the estimate per session.
-- Each ping adds two short messages to the transcript (the notification and "ok").
-- Dollar figures use API list prices (see `scripts/lib.mjs`), and are estimates.
-- Things that invalidate the cache anyway (model switch, `/compact`, MCP tools changing, upgrading Claude Code) are outside this plugin's reach. See [How Claude Code uses prompt caching](https://code.claude.com/docs/en/prompt-caching).
+## Commands
+
+| In Claude Code | Shell (`bin/ccw` is on the Bash tool's PATH) | |
+| :--- | :--- | :--- |
+| `/cache-warm:on [scope]` | `ccw on [scope]` | Switch on |
+| `/cache-warm:off [scope]` | `ccw off [scope]` | Switch off |
+| `/cache-warm:status` | `ccw status` | Sessions, what each waits on, next-ping countdown |
+| `/cache-warm:config ...` | `ccw config`, `ccw scopes` | Effective settings / every scope that has settings |
+| `/cache-warm:dashboard` | `ccw dashboard` | Web dashboard |
+| `/cache-warm:statusline` | `ccw statusline install` | Status line segment (`uninstall` restores the previous one) |
+| | `ccw doctor`, `ccw events 30` | Health checks, recent log |
+
+Scope words for the slash commands: `session`, `project`, `desktop`, `cli`, `ide`.
+
+## Status line
+
+```sh
+ccw statusline install             # user settings: every folder that doesn't define its own status line
+ccw statusline install --newline   # segment on its own row
+ccw statusline install --file=<project>/.claude/settings.local.json   # also a folder with its own line
+ccw statusline                     # what's installed, and what this folder actually uses
+ccw statusline uninstall           # restore every wrapped status line exactly
+```
+
+```text
+⬆ /gsd-update │ Opus 5.5 │ me │ ● warm on, ping in 31m 55s (1 bg job) · ctx 245.3k, cached 243.8k (99%) · 1h cache, 41m 55s left
+```
+
+It refreshes every 5 seconds (`--refresh=<s>` to change). Your own status line command runs first, concurrently, without an extra shell when it doesn't need one; its output is reused on timer-only refreshes so the 5-second tick stays cheap. If the plugin is ever removed, the launcher falls back to your original line.
 
 ## Dashboard
 
 ```sh
-ccw dashboard            # or: node dashboard/server.mjs
+ccw dashboard
 ```
 
-Binds to `127.0.0.1` only. Write endpoints reject cross-origin requests. Analytics are computed from `~/.claude/projects/**/*.jsonl` (read-only) and cached incrementally in `~/.claude-cache-warm/analytics-cache.json`; the first scan of a busy week can take half a minute.
+Binds to `127.0.0.1` only; write endpoints reject cross-origin requests. The Settings panel edits every scope (Global, CLI, Desktop app, IDE, project folders) with "Inherit" showing what each field would fall back to. Per-session settings live in the sessions table. Analytics are computed read-only from `~/.claude/projects/**/*.jsonl`.
 
 ## Tray app
 
 ```sh
-cd desktop
-npm install
-npm run dev              # or: npm run build
+cd desktop && npm install && npm run dev    # or: npm run build
 ```
 
-See [desktop/README.md](desktop/README.md). It is a thin shell: global hotkeys (Claude Code's own keybindings cannot run plugin commands, so these are OS-level), tray toggle + interval menu, starts the dashboard server if it isn't running, and shows the dashboard in a window.
+`Ctrl+Alt+W` toggles global warming, `Ctrl+Alt+D` opens the dashboard. See [desktop/README.md](desktop/README.md).
+
+## Costs and caveats
+
+- A ping is a real model turn: one cache read of the full context plus a few output tokens. On a subscription it counts against your usage limits. `ccw status` shows the estimate per session.
+- Each ping adds two short messages to the conversation.
+- A foreground subagent blocks the main conversation inside a tool call; nothing can refresh the main cache until it returns. Warming covers background work.
+- Things that invalidate the cache anyway (model switch, `/compact`, MCP tools changing, upgrading Claude Code) are outside this plugin's reach. See [How Claude Code uses prompt caching](https://code.claude.com/docs/en/prompt-caching).
+
+## Upgrading from 0.2
+
+0.2 used a plugin monitor (CLI only) with a scheduled-task fallback for everything else, and one global `engine` switch. A Desktop session would flip that switch to `cron` for every session, and cron-fired prompts reset the idle clock, so CLI sessions got fixed 25-30 minute pings all night. 0.3 replaces both engines with the per-session Stop-hook waker described above.
+
+On the first hook run after updating, the state directory is migrated automatically:
+
+- `config.json` moves to the scoped layout (backup: `config.v1.backup.json`); values that only mirrored the plugin tab go back to the plugin tab.
+- `engine` and `fallbackCron` are gone. The file keeps a top-level `enabled: false` that only switches off monitors and scheduled tasks still running from 0.2 in sessions you haven't restarted.
+- Per-session switches become session overrides; ping history is kept.
+- Junk registrations (headless helper runs, sessions silent for days) are pruned.
+- A 0.2 keep-alive scheduled task that fires again is told to delete itself instead of running.
 
 ## Development
 
 ```sh
-npm test                 # spawns real hook + monitor processes against a fake transcript
+npm test                    # spawns the real hook, waker and CLI against fake transcripts
 claude plugin validate .
 ```
 
-Layout: `.claude-plugin/` manifest + marketplace, `hooks/`, `monitors/`, `skills/`, `scripts/` (core, hook, monitor, CLI), `dashboard/`, `desktop/`, `docs/CONTRACT.md` (state files + HTTP API shared by all three parts).
+Layout: `.claude-plugin/` manifest + marketplace, `hooks/`, `skills/`, `scripts/` (`lib.mjs` core, `hook.mjs`, `waker.mjs`, `ccw.mjs`, status line), `dashboard/`, `desktop/`, `docs/` (tutorial, state contract).
 
 ## License
 

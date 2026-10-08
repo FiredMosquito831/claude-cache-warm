@@ -6,7 +6,7 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.mjs\"",
-            "timeout": 10
+            "timeout": 15
           }
         ]
       }
@@ -17,8 +17,7 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.mjs\"",
-            "timeout": 10,
-            "async": true
+            "timeout": 10
           }
         ]
       }
@@ -28,8 +27,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.mjs\"",
-            "timeout": 10
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/waker.mjs\"",
+            "asyncRewake": true,
+            "timeout": 7200
           }
         ]
       }
@@ -40,44 +40,7 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.mjs\"",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "SubagentStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.mjs\"",
-            "timeout": 10,
-            "async": true
-          }
-        ]
-      }
-    ],
-    "SubagentStop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.mjs\"",
-            "timeout": 10,
-            "async": true
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "Bash|PowerShell|CronDelete",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/hook.mjs\"",
-            "timeout": 10,
-            "async": true
+            "timeout": 5
           }
         ]
       }

@@ -53,7 +53,7 @@
   label.field select, label.field input { width: 100%; min-width: 0; }
   label.field small { color: var(--muted); }
   #sessions td:first-child { min-width: 190px; }
-  td select, td input[type=number] { padding: 3px 6px; font-size: 12px; width: 128px; }
+  td select, td input[type=number] { padding: 3px 6px; font-size: 12px; width: 150px; }
   #sessions td, #sessions th { padding-left: 6px; padding-right: 6px; }
   .tag { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 9px; border: 1px solid var(--axis); color: var(--ink-2); margin-left: 6px; white-space: nowrap; }
   input[type=number], select, button { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--axis); border-radius: 7px; padding: 6px 9px; }
@@ -63,6 +63,11 @@
   .seg { display: inline-flex; border: 1px solid var(--axis); border-radius: 7px; overflow: hidden; }
   .seg button { border: 0; border-radius: 0; padding: 5px 11px; }
   .seg button[aria-pressed=true] { background: var(--ink); color: var(--surface); }
+  .scopes { flex-wrap: wrap; margin-bottom: 10px; max-width: 100%; }
+  .scopes button { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .addproject { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+  .addproject input { flex: 1; min-width: 240px; font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--axis); border-radius: 7px; padding: 6px 9px; }
+  .src { color: var(--muted); font-size: 11px; }
 
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   th { text-align: left; color: var(--muted); font-weight: 500; padding: 6px 8px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
@@ -73,7 +78,7 @@
   .scroll { overflow-x: auto; }
   .pill { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
-  .dot.warming { background: var(--good); } .dot.expired, .dot.idle-cap { background: var(--warning); } .dot.nomonitor { background: var(--critical); }
+  .dot.warming, .dot.busy { background: var(--good); } .dot.expired, .dot.idle-cap, .dot.ping-cap { background: var(--warning); }
   .empty { color: var(--muted); padding: 18px 0; text-align: center; }
 
   .legend { display: flex; gap: 16px; font-size: 12px; color: var(--ink-2); margin: 0 0 8px; }
@@ -101,27 +106,20 @@
 
   <section class="card" style="margin-bottom:12px">
     <h2>Live sessions</h2>
-    <p class="sub">A ping is sent only when a session has been silent for one interval, and, by default, only while it waits on a subagent or background task. The right-hand columns are per-session overrides; "Global" follows the settings below.</p>
+    <p class="sub">Each session has its own timer. It starts when a turn ends and pings only after a full interval with no request at all; any prompt or turn restarts it. By default a session is warmed only while it waits on a subagent, background task or scheduled task. The right-hand columns are this session's own settings; "Inherit" uses its project, surface or global value.</p>
     <div class="scroll"><table id="sessions"></table></div>
   </section>
 
   <section class="card" style="margin-bottom:12px">
     <h2>Settings</h2>
-    <p class="sub">Applies to running sessions within 5 seconds. No restart.</p>
-    <form class="settings" id="settings">
-      <label class="field">Ping interval
-        <select name="intervalMinutes">
-          <option value="auto">Auto (50 min on 1h cache, 4 min on 5m)</option>
-          <option>4</option><option>10</option><option>15</option><option>20</option><option>30</option><option>45</option><option>50</option><option>55</option>
-        </select></label>
-      <label class="field">Stop after idle (minutes, 0 = never) <input type="number" name="maxIdleMinutes" min="0" step="10"></label>
-      <label class="field">Skip sessions below (tokens) <input type="number" name="minContextTokens" min="0" step="1000"></label>
-      <label class="field">Engine
-        <select name="engine"><option value="monitor">Monitor (activity-aware)</option><option value="cron">Cron (in-session fallback)</option></select></label>
-      <label class="field">Warm a session
-        <select name="warmWhen"><option value="background-work">Only while a subagent or background task runs</option><option value="always">Whenever it is idle</option></select></label>
-      <button class="primary" type="submit">Save</button>
-    </form>
+    <p class="sub">Most specific wins: session &gt; project folder &gt; surface (CLI, Desktop app, IDE) &gt; global &gt; plugin tab &gt; defaults. Anything left on "Inherit" falls through to the next scope down. Changes reach running sessions within seconds.</p>
+    <div class="seg scopes" id="scopeTabs" role="tablist" aria-label="Settings scope"></div>
+    <div class="addproject">
+      <input id="projectPath" list="folders" placeholder="Add a project folder (applies to it and its subfolders)" aria-label="Project folder">
+      <datalist id="folders"></datalist>
+      <button id="addProject" type="button">Add project</button>
+    </div>
+    <form class="settings" id="settings"></form>
   </section>
 
   <div id="analytics">
@@ -231,61 +229,134 @@ function columnChart(host, cols, fmt) {
   host.replaceChildren(svg);
 }
 
+const SCOPE_LABEL = (src) => !src ? '' : src === 'default' ? 'default' : src.startsWith('project:') ? 'project' : src.startsWith('surface:') ? src.slice(8) : src;
+const fmtSetting = (k, v) => k === 'intervalMinutes' ? (v === 'auto' ? 'auto' : v + ' min') : k === 'maxIdleMinutes' ? (v ? v + ' min' : 'never') : k === 'enabled' ? (v ? 'on' : 'off') : k === 'warmWhen' ? (v === 'always' ? 'whenever idle' : 'background work') : String(v);
+
+async function saveScope(scope, patch, msg) {
+  try { await post('/api/scope', { scope, patch }); toast(msg || 'Saved'); } catch (e) { toast(e.message); }
+  document.activeElement?.blur(); refreshState();
+}
+
 function renderSessions() {
   const now = Date.now() - skew;
   const rows = state.sessions.filter((s) => s.status !== 'ended');
   const table = $('#sessions');
   if (!rows.length) return table.replaceChildren(el('tr', {}, el('td', { className: 'empty', textContent: 'No live sessions yet. A session registers on its first prompt after the plugin is enabled.' })));
-  const LABEL = { warming: 'Warming', off: 'Off', 'no-work': 'Standing by (no background work)', 'small-context': 'Context too small', 'idle-cap': 'Idle cap reached', expired: 'Cache already expired' };
-  const head = el('tr', {}, ...['Session', 'Status', 'Next ping', 'Context', 'TTL', 'Idle', 'Pings', 'Per ping', 'Cold return', 'Warm when', 'Interval', 'Idle cap (min)', ''].map((h, i) => el('th', { textContent: h, className: i >= 3 && i <= 8 ? 'num' : '' })));
   // Rebuilding the table every second would close an open dropdown, so hold still while one has focus.
   if (table.contains(document.activeElement) && ['SELECT', 'INPUT'].includes(document.activeElement.tagName)) return;
-  const setOverride = async (id, patch) => { try { await post('/api/sessions/' + id, patch); toast('Saved for this session'); } catch (e) { toast(e.message); } document.activeElement?.blur(); refreshState(); };
+  const LABEL = { warming: 'Warming', busy: 'Turn in progress', off: 'Off', 'no-work': 'Standing by (nothing in the background)', 'small-context': 'Context too small', 'idle-cap': 'Idle cap reached', 'ping-cap': 'Ping cap reached', expired: 'Cache already expired' };
+  const head = el('tr', {}, ...['Session', 'Status', 'Next ping', 'Context', 'TTL', 'Idle', 'Pings', 'Per ping', 'Cold return', 'Warm when', 'Interval', 'Idle cap (min)', ''].map((h, i) => el('th', { textContent: h, className: i >= 3 && i <= 8 ? 'num' : '' })));
   table.replaceChildren(head, ...rows.map((s) => {
-    const noMon = !s.monitorAlive && state.config.engine === 'monitor';
-    const status = el('span', { className: 'pill' }, el('span', { className: 'dot ' + (noMon ? 'nomonitor' : s.status) }), noMon ? 'No monitor running' : LABEL[s.status] || s.status);
-    const effective = s.enabled ?? state.config.enabled;
-    const btn = el('button', { textContent: effective ? 'Pause' : 'Resume', onclick: () => setOverride(s.sessionId, { enabled: !effective }) });
+    const scope = 'session:' + s.sessionId;
     const ov = s.overrides || {};
-    const hasOverride = (s.enabled !== null && s.enabled !== undefined) || Object.keys(ov).length > 0;
-    const follow = !hasOverride ? '' : el('button', { textContent: 'Reset', title: 'Drop all overrides for this session', style: 'margin-left:6px', onclick: () => setOverride(s.sessionId, { enabled: null, intervalMinutes: null, maxIdleMinutes: null, warmWhen: null }) });
-    const whenSel = el('select', { ariaLabel: 'When to warm this session', onchange: (e) => setOverride(s.sessionId, { warmWhen: e.target.value || null }) },
-      ...[['', `Global (${state.config.warmWhen === 'always' ? 'idle' : 'bg work'})`], ['background-work', 'Background work'], ['always', 'Whenever idle']].map(([v, t]) => el('option', { value: v, textContent: t })));
-    whenSel.value = ov.warmWhen || '';
-    const intervalSel = el('select', { ariaLabel: 'Interval for this session', onchange: (e) => setOverride(s.sessionId, { intervalMinutes: e.target.value === '' ? null : e.target.value === 'auto' ? 'auto' : Number(e.target.value) }) },
-      ...[['', `Global (${state.config.intervalMinutes === 'auto' ? 'auto' : state.config.intervalMinutes + ' min'})`], ['auto', 'Auto'], ...[4, 10, 15, 20, 30, 45, 50, 55].map((n) => [String(n), n + ' min'])].map(([v, t]) => el('option', { value: v, textContent: t })));
-    intervalSel.value = ov.intervalMinutes == null ? '' : String(ov.intervalMinutes);
-    if (intervalSel.value !== (ov.intervalMinutes == null ? '' : String(ov.intervalMinutes))) { intervalSel.append(el('option', { value: String(ov.intervalMinutes), textContent: ov.intervalMinutes + ' min' })); intervalSel.value = String(ov.intervalMinutes); }
-    const idleInput = el('input', { type: 'number', min: 0, step: 10, ariaLabel: 'Idle cap for this session', placeholder: `Global (${state.config.maxIdleMinutes})`, value: ov.maxIdleMinutes ?? '',
-      onchange: (e) => setOverride(s.sessionId, { maxIdleMinutes: e.target.value === '' ? null : Number(e.target.value) }) });
-    const agentTag = s.agentsRunning ? el('span', { className: 'tag', title: (s.agentTypes || []).join(', '), textContent: `${s.agentsRunning} background job${s.agentsRunning > 1 ? 's' : ''}` }) : '';
+    const inherit = (k) => ov[k] === undefined ? `${fmtSetting(k, s.settings[k])} · ${SCOPE_LABEL(s.sources[k])}` : null;
+    const inheritedLabel = (k) => { const own = ov[k]; if (own === undefined) return `Inherit (${fmtSetting(k, s.settings[k])} · ${SCOPE_LABEL(s.sources[k])})`; return 'Inherit'; };
+    const waiting = s.status === 'warming' && !s.waker?.alive ? el('div', { className: 'path', textContent: 'no timer yet: starts when the current turn ends' }) : '';
+    const status = el('span', { className: 'pill' }, el('span', { className: 'dot ' + s.status }), LABEL[s.status] || s.status);
+    const work = s.work?.count ? el('span', { className: 'tag', title: [...s.work.tasks.map((t) => `${t.type}: ${t.description}`), ...s.work.crons.map((c) => `cron ${c.schedule}`)].join('\n'), textContent: `${s.work.count} background job${s.work.count > 1 ? 's' : ''}` }) : '';
+    const btn = el('button', { textContent: s.settings.enabled ? 'Pause' : 'Resume', onclick: () => saveScope(scope, { enabled: !s.settings.enabled }, s.settings.enabled ? 'Paused this session' : 'Resumed this session') });
+    const reset = Object.keys(ov).length ? el('button', { textContent: 'Reset', title: "Drop this session's own settings", style: 'margin-left:6px', onclick: async () => { try { await post('/api/scope', { scope, reset: true }); toast('This session inherits everything again'); } catch (e) { toast(e.message); } refreshState(); } }) : '';
+    const select = (k, options, parse) => {
+      const sel = el('select', { ariaLabel: k + ' for this session', onchange: (e) => saveScope(scope, { [k]: e.target.value === '' ? null : parse(e.target.value) }, 'Saved for this session') },
+        el('option', { value: '', textContent: inheritedLabel(k) }), ...options.map(([v, t]) => el('option', { value: v, textContent: t })));
+      const cur = ov[k] === undefined ? '' : String(ov[k]);
+      if (cur && ![...sel.options].some((o) => o.value === cur)) sel.append(el('option', { value: cur, textContent: fmtSetting(k, ov[k]) }));
+      sel.value = cur;
+      return sel;
+    };
+    const whenSel = select('warmWhen', [['background-work', 'Background work'], ['always', 'Whenever idle']], (v) => v);
+    const intervalSel = select('intervalMinutes', [['auto', 'Auto'], ...[4, 10, 15, 20, 30, 40, 45, 50, 55].map((n) => [String(n), n + ' min'])], (v) => v === 'auto' ? 'auto' : Number(v));
+    const idleInput = el('input', { type: 'number', min: 0, step: 10, ariaLabel: 'Idle cap for this session', placeholder: inherit('maxIdleMinutes') || '', value: ov.maxIdleMinutes ?? '', title: 'Empty = inherit',
+      onchange: (e) => saveScope(scope, { maxIdleMinutes: e.target.value === '' ? null : Number(e.target.value) }, 'Saved for this session') });
+    const where = [s.surface === 'desktop' ? 'Desktop app' : s.surface === 'ide' ? 'IDE' : 'CLI', s.project ? 'project ' + s.project.split('/').pop() : ''].filter(Boolean).join(' · ');
     return el('tr', {},
-      el('td', {}, el('div', { textContent: s.sessionId.slice(0, 8) + (s.model ? '  ·  ' + s.model.replace('claude-', '') : '') }), el('div', { className: 'path', textContent: s.cwd || '' })),
-      el('td', {}, status, agentTag, s.warning ? el('div', { className: 'path', textContent: s.warning }) : ''),
+      el('td', {}, el('div', { textContent: s.sessionId.slice(0, 8) + (s.model ? '  ·  ' + s.model.replace('claude-', '') : '') }), el('div', { className: 'src', textContent: where }), el('div', { className: 'path', textContent: s.cwd || '' })),
+      el('td', {}, status, work, waiting, s.warning ? el('div', { className: 'path', textContent: s.warning }) : ''),
       el('td', { textContent: s.nextPingAt ? fmtDur(s.nextPingAt - now) : '-' }),
       el('td', { className: 'num', textContent: fmtTok(s.contextTokens) }),
       el('td', { className: 'num', textContent: s.ttl }),
       el('td', { className: 'num', textContent: fmtDur(now - s.lastHumanAt) }),
-      el('td', { className: 'num', textContent: `${s.pingsSinceUser} (${s.pingsTotal} total)` }),
+      el('td', { className: 'num', textContent: `${s.pingsSinceActivity} (${s.pingsTotal} total)` }),
       el('td', { className: 'num', textContent: fmtUsd(s.pingUsd) }),
       el('td', { className: 'num', textContent: fmtUsd(s.rebuildUsd) }),
       el('td', {}, whenSel),
       el('td', {}, intervalSel),
       el('td', {}, idleInput),
-      el('td', { style: 'white-space:nowrap' }, btn, follow));
+      el('td', { style: 'white-space:nowrap' }, btn, reset));
   }));
 }
 
+let selectedScope = 'global';
+const FIELDS = [
+  ['enabled', 'Warming', [['true', 'On'], ['false', 'Off']], (v) => v === 'true'],
+  ['warmWhen', 'Warm a session', [['background-work', 'Only while background work is pending'], ['always', 'Whenever it is idle']], (v) => v],
+  ['intervalMinutes', 'Ping interval', [['auto', 'Auto (50 min on 1h cache, 4 min on 5m)'], ...[4, 10, 15, 20, 30, 40, 45, 50, 55].map((n) => [String(n), n + ' min'])], (v) => v === 'auto' ? 'auto' : Number(v)],
+  ['maxIdleMinutes', 'Stop after idle (minutes, 0 = never)', null, Number],
+  ['minContextTokens', 'Skip sessions below (tokens)', null, Number],
+  ['dashboardPort', 'Dashboard port', null, Number],
+];
+
 function renderConfig() {
-  const c = state.config, f = $('#settings');
-  $('#master').checked = c.enabled; $('#masterLabel').textContent = c.enabled ? 'Warming on' : 'Warming off';
-  if (f.contains(document.activeElement)) return; // don't fight the user mid-edit
-  const sel = f.intervalMinutes;
-  if (![...sel.options].some((o) => o.value === String(c.intervalMinutes))) sel.append(el('option', { textContent: String(c.intervalMinutes) }));
-  sel.value = String(c.intervalMinutes);
-  f.maxIdleMinutes.value = c.maxIdleMinutes; f.minContextTokens.value = c.minContextTokens; f.engine.value = c.engine;
-  f.warmWhen.value = c.warmWhen;
+  const scopes = state.scopes;
+  if (!scopes.some((x) => x.scope === selectedScope)) selectedScope = 'global';
+  const g = scopes[0];
+  $('#master').checked = g.values.enabled; $('#masterLabel').textContent = g.values.enabled ? 'Warming on (global)' : 'Warming off (global)';
+  $('#folders').replaceChildren(...state.folders.map((f) => el('option', { value: f })));
+  const tabs = $('#scopeTabs');
+  tabs.replaceChildren(...scopes.map((x) => {
+    const n = Object.keys(x.own || {}).length;
+    const label = x.scope.startsWith('project:') ? 'Project ' + x.label.split('/').slice(-2).join('/') : x.label;
+    const b = el('button', { type: 'button', role: 'tab', title: x.label, textContent: label + (n ? ` (${n})` : ''), onclick: () => { selectedScope = x.scope; renderConfig(true); } });
+    b.setAttribute('aria-pressed', String(x.scope === selectedScope));
+    return b;
+  }));
+  const f = $('#settings');
+  // Don't fight the user mid-edit: unsaved changes survive the 5-second refresh.
+  if (!arguments[0] && (f.dataset.dirty === selectedScope || f.contains(document.activeElement))) return;
+  delete f.dataset.dirty;
+  f.oninput = () => { f.dataset.dirty = selectedScope; };
+  const sc = scopes.find((x) => x.scope === selectedScope);
+  const isGlobal = sc.scope === 'global';
+  const below = (k) => {
+    // What this scope would get if it set nothing itself.
+    const src = sc.sources[k];
+    if (sc.own[k] === undefined) return `${fmtSetting(k, sc.values[k])} from ${SCOPE_LABEL(src)}`;
+    return isGlobal ? `plugin tab or default` : 'the scope below';
+  };
+  const fields = FIELDS.filter(([k]) => isGlobal || k !== 'dashboardPort').map(([k, label, options, parse]) => {
+    const own = sc.own[k];
+    let input;
+    if (options) {
+      input = el('select', { name: k }, el('option', { value: '', textContent: 'Inherit (' + below(k) + ')' }), ...options.map(([v, t]) => el('option', { value: v, textContent: t })));
+      const cur = own === undefined ? '' : String(own);
+      if (cur && ![...input.options].some((o) => o.value === cur)) input.append(el('option', { value: cur, textContent: fmtSetting(k, own) }));
+      input.value = cur;
+    } else {
+      input = el('input', { type: 'number', name: k, min: 0, step: k === 'minContextTokens' ? 1000 : k === 'dashboardPort' ? 1 : 10, value: own ?? '', placeholder: 'Inherit (' + below(k) + ')' });
+    }
+    input.dataset.parse = k;
+    return el('label', { className: 'field' }, label, input);
+  });
+  const reset = el('button', { type: 'button', textContent: 'Reset this scope', onclick: async () => { try { await post('/api/scope', { scope: sc.scope, reset: true }); toast('Cleared ' + sc.label); } catch (e) { toast(e.message); } refreshState(); } });
+  f.replaceChildren(...fields, el('div', { style: 'display:flex;gap:8px' }, el('button', { className: 'primary', type: 'submit', textContent: 'Save ' + (isGlobal ? 'global' : sc.scope.startsWith('project:') ? 'project' : sc.label) }), reset));
+  f.onsubmit = (e) => {
+    e.preventDefault();
+    const patch = {};
+    for (const [k, , , parse] of FIELDS) { const i = f.elements[k]; if (!i) continue; patch[k] = i.value === '' ? null : parse(i.value); }
+    delete f.dataset.dirty;
+    saveScope(sc.scope, patch, 'Saved ' + sc.label);
+    refreshAnalytics();
+  };
 }
+
+$('#addProject').addEventListener('click', async () => {
+  const p = $('#projectPath').value.trim();
+  if (!p) return toast('Pick or type a folder');
+  // A project scope exists once it holds a setting; start with the current effective interval so it shows up.
+  try { await post('/api/scope', { scope: 'project:' + p, patch: { intervalMinutes: state.scopes[0].values.intervalMinutes } }); selectedScope = null; $('#projectPath').value = ''; toast('Project added: edit its settings below'); } catch (e) { toast(e.message); }
+  await refreshState();
+  const added = state.scopes.filter((x) => x.scope.startsWith('project:')).pop(); if (added) { selectedScope = added.scope; renderConfig(true); }
+});
 
 function renderAnalytics(a) {
   const t = a.totals;
@@ -342,14 +413,7 @@ async function refreshAnalytics() {
   $('#analytics').classList.remove('loading');
 }
 
-$('#master').addEventListener('change', async (e) => { await post('/api/config', { enabled: e.target.checked }); toast(e.target.checked ? 'Warming on' : 'Warming off'); refreshState(); });
-$('#settings').addEventListener('submit', async (e) => {
-  e.preventDefault(); const f = e.target;
-  try {
-    await post('/api/config', { intervalMinutes: f.intervalMinutes.value === 'auto' ? 'auto' : Number(f.intervalMinutes.value), maxIdleMinutes: Number(f.maxIdleMinutes.value), minContextTokens: Number(f.minContextTokens.value), engine: f.engine.value, warmWhen: f.warmWhen.value });
-    document.activeElement.blur(); toast('Saved'); refreshState(); refreshAnalytics();
-  } catch (err) { toast(err.message); }
-});
+$('#master').addEventListener('change', async (e) => { await saveScope('global', { enabled: e.target.checked }, e.target.checked ? 'Warming on (global)' : 'Warming off (global)'); });
 $('#range').addEventListener('click', (e) => {
   if (!e.target.dataset.days) return;
   days = Number(e.target.dataset.days);

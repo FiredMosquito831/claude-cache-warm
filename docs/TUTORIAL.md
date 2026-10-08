@@ -1,14 +1,14 @@
 # Usage tutorial
 
-A walk through everything, in the order you will meet it. Ten minutes.
+Everything in the order you will meet it. About ten minutes.
 
 1. [Install](#1-install)
 2. [What happens by default](#2-what-happens-by-default)
 3. [Check that it works](#3-check-that-it-works)
-4. [Turn it on and off](#4-turn-it-on-and-off)
-5. [Choose when sessions get warmed](#5-choose-when-sessions-get-warmed)
-6. [Tune interval and idle cap](#6-tune-interval-and-idle-cap)
-7. [Per-session settings](#7-per-session-settings)
+4. [Scopes: global, surface, project, session](#4-scopes-global-surface-project-session)
+5. [Turn it on and off](#5-turn-it-on-and-off)
+6. [Choose when sessions get warmed](#6-choose-when-sessions-get-warmed)
+7. [Tune interval and idle cap](#7-tune-interval-and-idle-cap)
 8. [The dashboard](#8-the-dashboard)
 9. [The status line](#9-the-status-line)
 10. [Hotkeys and the tray app](#10-hotkeys-and-the-tray-app)
@@ -25,28 +25,26 @@ In Claude Code:
 /plugin install cache-warm@claude-cache-warm
 ```
 
-Start a **new** session afterwards. Hooks and the monitor process attach when a session starts.
+Then `/reload-plugins` or start a new session. Updating later: `/plugin` → update, then `/reload-plugins`.
 
-Requirements: Node 18 or newer on your PATH. Nothing else.
+Requirements: Node 18 or newer on your PATH, and a Claude Code recent enough to give Stop hooks the list of running background tasks (2.1.29x does).
 
 ## 2. What happens by default
 
-Nothing visible, and nothing at all for most sessions. With the defaults, a session is pinged only when **all** of these are true:
+Nothing visible, and nothing at all for most sessions. A session is pinged only when **all** of these are true:
 
 | Condition | Default | Why |
 | :--- | :--- | :--- |
-| Warming is on | on | Master switch |
-| A subagent or background task is running in that session | required | You are certainly coming back for its result, and while it runs the main conversation sends nothing that would refresh its own cache |
-| The main conversation has been silent for one interval | 50 min on a 1h cache, 4 min on a 5m cache | An active session refreshes its own cache for free |
+| Warming is on for that session | on | |
+| Something is pending in the background: a subagent, a background shell, a workflow, a scheduled task | required | Its result lands in this conversation, so you are coming back; meanwhile the conversation sends nothing that would refresh its own cache |
+| The conversation has sent no request for one interval | 50 min on a 1h cache, 4 min on a 5m cache | Any request already refreshes the cache for free |
 | The cache is still alive | | Pinging an expired cache would *be* the expensive rewrite |
-| You have not been away longer than the idle cap | 180 min | Bounds what a forgotten session can cost |
+| Something happened within the idle cap | 180 min | Bounds what a forgotten session can cost |
 | The context is at least 20K tokens | | Small contexts are cheap to rebuild |
 
-A ping is one line delivered to the idle session. Claude answers `ok`. That single small turn reads the whole conversation from the cache, which resets the cache timer.
+How it's timed: every time a turn ends, a small background hook ("waker") starts for that session and sleeps until one interval after the conversation's last request. Any new turn (you typing, an agent reporting back, a scheduled task) makes it stand down, and the next turn end starts a fresh one. If it wakes up and the session should still be kept warm, Claude Code wakes the session with a one-line note, Claude answers `ok`, and that single small turn reads the whole conversation from the cache, resetting the cache timer.
 
-Typical case it is built for: you launch a 90-minute background agent or a long build, go for lunch, and come back to a conversation with 600K tokens of context. Without warming, the first turn back re-writes all 600K tokens at full price and is slow. With warming, one ping at minute 50 kept it alive.
-
-Every setting here is also in the plugin's options page (`/plugin` → cache-warm → configure). Changes made there apply at the next session start; changes made with `ccw` or the dashboard apply within 5 seconds.
+Typical case: you start a 90-minute background agent, go for lunch, and come back to a 600K-token conversation. Without warming, the first turn back re-writes all 600K tokens at full price. With warming, one ping at minute 50 kept it alive.
 
 ## 3. Check that it works
 
@@ -55,79 +53,100 @@ Every setting here is also in the plugin's options page (`/plugin` → cache-war
 ```
 
 ```text
-cache-warm: ON | warm only while background work runs | interval auto | stop after 180m idle | engine monitor
-* 264db9fa  no-work        243.7k ctx   ttl 1h  every 50m  idle 2m 10s    0 pings  ~$0.0609/ping  standing by: no subagent or background task running
+global: ON | warm while background work runs | interval 50m | stop after 180m idle
+* 264db9fa  cli      no-work        243.7k ctx   ttl 1h  every 50m  idle 2m 10s    0 pings  ~$0.0609/ping  standing by: nothing running in the background
     C:\Users\me\project
+  a3398cd8  desktop  warming        466.9k ctx   ttl 1h  every 30m  idle 4m 05s    0 pings  1 bg job  ~$0.1167/ping  next ping in 25m 55s
+    scoped: intervalMinutes=30 (surface:desktop)
+    C:\Users\me\api
 ```
 
-Reading a row: session id (`*` marks the one you are in), state, context size, detected cache TTL, effective interval, how long since you last did something, pings since then, estimated cost of one ping, and what happens next.
+Reading a row: session id (`*` = the one you're in), surface, state, context size, cache TTL, effective interval, time since the last activity, pings since then, background jobs, cost of one ping, what happens next. A `scoped:` line lists settings that come from a narrower scope than global.
 
 | State | Meaning |
 | :--- | :--- |
 | `warming` | Will ping when the countdown reaches zero |
-| `no-work` | Standing by: nothing is running in the background (default policy) |
-| `off` | Switched off globally or for this session |
-| `idle-cap` | You have been away longer than the idle cap |
-| `expired` | The cache already timed out, so there is nothing left to keep warm |
+| `busy` | A turn is running; the conversation refreshes its own cache |
+| `no-work` | Standing by: nothing pending in the background (default policy) |
+| `off` | Switched off at some scope for this session |
+| `idle-cap` | Nothing has happened for longer than the idle cap |
+| `ping-cap` | Already pinged the maximum number of times since the last activity |
+| `expired` | The cache already timed out; nothing left to keep warm |
 | `small-context` | Below `minContextTokens` |
-| `[no monitor]` | The timer process is not running in this session: see [Troubleshooting](#12-troubleshooting) |
 
 `ccw doctor` runs the health checks in one go.
 
-## 4. Turn it on and off
+## 4. Scopes: global, surface, project, session
+
+Every setting can be set at several scopes. Each session takes each value from the most specific scope that sets it:
+
+```
+session  >  project folder  >  surface (cli | desktop | ide)  >  global  >  plugin tab  >  defaults
+```
+
+- **Global** applies to everything that doesn't say otherwise.
+- **Surface** separates where Claude Code runs: the terminal (`cli`), the Claude desktop app (`desktop`), IDE extensions (`ide`). A Desktop setting never changes a CLI session, and the other way round.
+- **Project** applies to sessions started in that folder or any folder below it.
+- **Session** applies to one session only.
+
+Leave something unset and it inherits from the next scope down. With nothing set anywhere you get the defaults: on, background work only, `auto` interval (50 minutes on a 1-hour cache), 3-hour idle cap.
+
+```sh
+ccw config --session        # what this session uses, and which scope each value comes from
+ccw scopes                  # every scope that has settings
+```
+
+The flags work on every settings command:
+
+| Flag | Scope |
+| :--- | :--- |
+| (none) | global |
+| `--cli`, `--desktop`, `--ide` | that surface |
+| `--project` | the current folder and below (`--project=<folder>` for another) |
+| `--session` | the session this shell belongs to (`--session=<id prefix>` for another) |
+
+The slash commands take the same scopes as words: `/cache-warm:off desktop`, `/cache-warm:on session`, `/cache-warm:config interval 20 project`.
+
+## 5. Turn it on and off
 
 | | In Claude Code | In a shell |
 | :--- | :--- | :--- |
 | Everything off | `/cache-warm:off` | `ccw off` |
 | Everything on | `/cache-warm:on` | `ccw on` |
+| Only the desktop app off | `/cache-warm:off desktop` | `ccw off --desktop` |
+| Only this project off | `/cache-warm:off project` | `ccw off --project` |
 | Only this session off | `/cache-warm:off session` | `ccw off --session` |
+| Undo a scope's settings | | `ccw reset --session` (or `--project`, `--desktop`, ...) |
 
-Changes reach running sessions within 5 seconds. Nothing needs a restart.
+Changes reach running sessions within seconds. Nothing needs a restart.
 
-## 5. Choose when sessions get warmed
+## 6. Choose when sessions get warmed
 
 ```sh
-ccw when background-work   # default: only while a subagent or background task runs
+ccw when background-work   # default: only while something is pending in the background
 ccw when always            # any idle session, until the idle cap
+ccw when always --project  # ...only for this project
 ```
 
-`always` is for people who step away from large sessions a lot and want to come back to a warm cache regardless. It costs more: every idle session gets pinged every interval until the idle cap. Look at the dashboard's "Recent cold rebuilds" table before deciding; it shows what your real pauses cost and what warming would have cost instead.
+`always` is for large sessions you step away from and want to come back to warm regardless. It costs more: every idle session in that scope gets pinged each interval until the idle cap. Check the dashboard's "Recent cold rebuilds" table first; it shows what your real pauses cost and what warming would have cost instead.
 
-What counts as background work:
+What counts as pending background work comes straight from Claude Code (the list it hands to Stop hooks): background subagents, background shell commands, workflows, teammates, cloud sessions, MCP tasks, and scheduled tasks (`/loop`, cron). Monitors don't count: they are watchers that can run forever.
 
-- **Subagents**, from the moment they start until they stop, including background agents and workflow agents.
-- **Background shell commands** (`run_in_background`). Claude Code has no event for one finishing, so these count as running for 2 hours.
-
-## 6. Tune interval and idle cap
+## 7. Tune interval and idle cap
 
 ```sh
-ccw interval auto          # recommended
-ccw interval 30            # minutes, 1 to 59
-ccw set maxIdleMinutes 240 # 0 = never stop
+ccw interval auto                    # recommended
+ccw interval 30                      # minutes, 1 to 59
+ccw set maxIdleMinutes 240           # 0 = never stop
 ccw set minContextTokens 50000
+ccw unset intervalMinutes --desktop  # back to inheriting
 ```
 
-**Interval.** It must be shorter than the cache TTL or pings arrive too late. `auto` reads the TTL from the session's own transcript. If `status` prints a `warning:` line, your fixed interval is too long for that session.
+**Interval.** Counted from the conversation's last request, and must be shorter than the cache TTL or pings land too late. `auto` reads the TTL from the session's own transcript. A `warning:` line in `status` means a fixed interval is too long for that session.
 
-**Get the 1-hour TTL first.** It turns 15 pings an hour into 1. A Claude subscription gets it automatically while you are inside plan limits. With an API key, or to keep it on usage credits, add `"promptCacheTtl": "1h"` to your Claude Code settings.
+**Get the 1-hour TTL first.** It turns 15 pings an hour into 1. A Claude subscription gets it automatically inside plan limits. With an API key, or to keep it on usage credits, add `"promptCacheTtl": "1h"` to your Claude Code settings.
 
-**Idle cap.** Pings stop paying for themselves once you have spent more on them than one rebuild costs: about 19 pings (~16 h) on a 1h cache, about 11 pings (~45 min) on a 5m cache, and roughly 4x later on Fable 5.1 where cache reads are cheaper. The 3-hour default is deliberately cautious.
-
-## 7. Per-session settings
-
-Every session can override the global on/off switch, the warming policy, the interval and the idle cap.
-
-In a shell, add `--session` (the session this shell belongs to) or `--session=<first characters of the id>`:
-
-```sh
-ccw when always --session            # keep this one warm even with nothing in the background
-ccw interval 20 --session=264d
-ccw set maxIdleMinutes 600 --session
-ccw off --session
-ccw follow                           # drop all overrides, follow the global settings again
-```
-
-Or do it in the dashboard, which is usually easier.
+**Idle cap.** "Idle" means nobody typed and no real work happened: pings, scheduled-task prompts and background reports don't reset it. Pings stop paying for themselves once they cost more than one rebuild: about 19 pings (~16 h) on a 1h cache, about 11 (~45 min) on a 5m cache, roughly 4x later on Fable 5.1. On top of the idle cap there's a hard limit of `ceil(idle cap / interval) + 1` pings per idle stretch (24 when the cap is 0).
 
 ## 8. The dashboard
 
@@ -135,29 +154,19 @@ Or do it in the dashboard, which is usually easier.
 /cache-warm:dashboard
 ```
 
-or `ccw dashboard` in a shell. It starts a small local web server (loopback only, port 4777) and opens `http://127.0.0.1:4777/`. Running the command again just reopens the page.
+or `ccw dashboard`. It starts a small local server (loopback only) and opens the page. Running it again just reopens it.
 
-**Live sessions.** One row per open Claude Code session, with a live countdown to the next ping. The right-hand columns are the per-session settings:
+**Live sessions.** One row per open session: where it runs (CLI / Desktop app / IDE, project), state, what it's waiting on, a live countdown to the next ping. The right-hand columns are that session's own settings; "Inherit (…)" shows the value it gets otherwise and where from. Pause/Resume and Reset act on that session only.
 
-| Column | What it does |
-| :--- | :--- |
-| Warm when | `Global`, `Background work`, or `Whenever idle` for this session |
-| Interval | `Global`, `Auto`, or a fixed number of minutes |
-| Idle cap | Empty means global |
-| Pause / Resume | Per-session off switch |
-| Reset | Drop all overrides for the session |
+**Settings.** Tabs for Global, CLI, Desktop app, IDE and each project folder. Every field starts on "Inherit (value from scope)". Pick a value to set it at that scope, set it back to Inherit to clear it. "Add project" creates a project scope for any folder (suggestions come from your sessions' folders). "Reset this scope" clears everything at that scope.
 
-**Settings.** The global defaults. Same as the `ccw` commands.
-
-**Analytics.** Computed from your own transcripts under `~/.claude/projects`, read-only:
+**Analytics.** Computed read-only from your transcripts under `~/.claude/projects`:
 
 - *Cache hit ratio*: share of input tokens served from the cache.
 - *Cold rebuilds*: times you came back after the TTL and paid to re-write the context.
-- *Avoidable with warming*: rebuild cost minus what the pings would have cost, for pauses inside your idle cap.
-- *Pings sent*: and how many were verified, from the transcript, to have landed on a warm cache.
-- *Where the cache dies*: your pauses by length, split into survived and rebuilt. This is the chart that tells you whether a longer idle cap is worth it.
-
-The first scan of a busy week takes about half a minute; afterwards it is incremental.
+- *Avoidable with warming*: rebuild cost minus what pings would have cost, for pauses inside your idle cap.
+- *Pings sent*: and how many were verified from the transcript to have landed on a warm cache.
+- *Where the cache dies*: your pauses by length, survived vs rebuilt.
 
 ## 9. The status line
 
@@ -166,35 +175,41 @@ The first scan of a busy week takes about half a minute; afterwards it is increm
 ```
 
 ```text
-⬆ /gsd-update │ Fable 5.1 │ v1.0 · completed │ me │ ● warm on, ping in 31m 59s (1 bg job) · ctx 245.3k, cached 243.8k (99%) · 1h cache, 41m 59s left
+⬆ /gsd-update │ Opus 5.5 │ me │ ● warm on, ping in 31m 55s (1 bg job) · ctx 245.3k, cached 243.8k (99%) · 1h cache, 41m 55s left
 ```
 
 | Part | Meaning |
 | :--- | :--- |
-| `● warm on, ping in …` / `◌ warm standby` / `○ warm off` | Warming state for this session |
-| `(1 bg job)` | Background work detected |
-| `ctx 245.3k` | Tokens currently in the context window |
+| `● warm on, ping in …` / `◌ warm standby` / `○ warm off` | This session's warming state |
+| `(1 bg job)` | Background work pending |
+| `ctx 245.3k` | Tokens in the context window |
 | `cached 243.8k (99%)` | How many of them the last request read from the cache |
 | `1h cache, 41m left` | TTL in use and time until the cache goes cold; `cache cold` in red once it has |
 
-**It adds to your status line; it does not replace it.** Claude Code only supports one `statusLine` command, so the installer finds the one in effect, remembers it, and points the setting at a small launcher that runs your command first with the same input, prints its output untouched, then appends the segment.
+**It adds to your status line; it does not replace it.** Claude Code supports one `statusLine` command per settings file, so the installer remembers the command that was there and points the setting at a small launcher that runs your command first (same input), prints its output untouched, and appends the segment.
+
+**Where it shows up.** Claude Code uses the status line from the most specific settings file that has one: `<project>/.claude/settings.local.json`, then `<project>/.claude/settings.json`, then `~/.claude/settings.json`. `ccw statusline install` goes into your user settings, so every folder gets it unless that folder defines its own status line. The installer tells you when the current folder does, and `--file=` adds the segment there too.
 
 ```sh
-ccw statusline install             # append to the last line of the existing status line
-ccw statusline install --newline   # put the segment on its own row instead
-ccw statusline                     # what is installed, what it wraps
-ccw statusline uninstall           # restore the previous status line exactly
+ccw statusline install                    # user settings, refresh every 5 s
+ccw statusline install --newline          # segment on its own row
+ccw statusline install --refresh=10       # slower tick
+ccw statusline install --file=.claude/settings.local.json
+ccw statusline                            # installs, and what this folder uses
+ccw statusline uninstall                  # restore every wrapped status line exactly
 ```
 
-The settings file is backed up next to itself as `*.ccw-backup` before it is changed. If the plugin is ever removed, the launcher falls back to just running your original status line.
+**Refresh.** Countdowns tick every 5 seconds even while the session sits idle (`refreshInterval`). Each tick only re-runs your own status line command when something it shows changed (or every 15 s); otherwise its last output is reused, so the tick stays fast. Claude Code cancels a status line run that's still going when the next update arrives, so speed is what keeps the line from flickering or going blank.
+
+Each settings file is backed up as `*.ccw-backup` before it's changed. If the plugin is removed, the launcher falls back to just your original status line.
 
 ## 10. Hotkeys and the tray app
 
-Claude Code's own keybindings can only trigger built-in actions; they cannot run a plugin command. So the hotkeys are global ones, provided by the optional tray app:
+Claude Code's keybindings can only trigger built-in actions, not plugin commands, so the hotkeys come from the optional tray app:
 
 | Hotkey | Action |
 | :--- | :--- |
-| `Ctrl+Alt+W` | Toggle warming on/off |
+| `Ctrl+Alt+W` | Toggle warming on/off globally |
 | `Ctrl+Alt+D` | Open the dashboard |
 
 ```sh
@@ -203,58 +218,62 @@ npm install
 npm run dev        # or: npm run build, for an installer
 ```
 
-Change or disable them in `~/.claude-cache-warm/desktop.json`:
+Change or disable them in `~/.claude-cache-warm/desktop.json`, then restart the tray app:
 
 ```json
 { "toggleHotkey": "Ctrl+Alt+W", "dashboardHotkey": "" }
 ```
 
-Hotkey changes apply when the tray app restarts. The tray icon's tooltip and menu show the current state, and the menu has the same switches (on/off, background-work only, interval). See [desktop/README.md](../desktop/README.md).
-
-Without the tray app, the fastest toggle inside Claude Code is typing `/cache-warm:off`.
+The tray menu drives the global scope (on/off, background-work only, interval); surfaces, projects and sessions are edited in the dashboard. See [desktop/README.md](../desktop/README.md).
 
 ## 11. Is this safe for my cache and my conversation?
 
-**It cannot invalidate your cache.** The cache matches the *start* of each request. A ping is appended at the *end* of the conversation, like any other turn, so everything before it still matches. Claude Code's documentation lists hooks, monitors and skills from plugins as components that keep the cache. The plugin ships no MCP server and changes no tools, system prompt, model or effort level, which are the things that do invalidate it.
+**It can't invalidate your cache.** The cache matches the *start* of each request. A ping is appended at the *end* of the conversation like any other turn, so everything before it still matches. Claude Code's documentation lists plugin hooks and skills as components that keep the cache. The plugin ships no MCP server and changes no tools, system prompt, model or effort level.
 
-**It does not interrupt you.** Pings are only produced when the main conversation has been silent for a whole interval. A ping that arrives while Claude is busy is a queued notification like any other; it does not cut into the running turn.
+**It doesn't interrupt you.** A waker only exists between turns; the moment a turn starts it stands down. It never creates scheduled tasks, so nothing fires on a wall-clock schedule while you work.
+
+**Sessions can't interfere with each other.** Each session has its own waker and its own resolved settings. There's no global engine to flip. Writes to shared files are locked, so a Desktop session and a CLI session saving at the same moment can't lose each other's change.
 
 **What it does change:**
 
-- Each ping adds two short messages to the conversation (the ping line and `ok`). Over a long idle period that is a few hundred tokens.
-- Each ping is a real request. It costs one cache read of the context and counts toward subscription usage limits.
-- A ping's turn ending is not treated as you being active, so pings can never keep their own session alive past the idle cap.
+- Each ping adds two short messages to the conversation (a one-line note and `ok`).
+- Each ping is a real request: one cache read of the context, counted toward subscription usage limits.
+- Pings never count as activity, so they can't keep a session alive past the idle cap.
 
-**It fails closed.** Hooks always exit successfully and never block a prompt. If the monitor dies, pings simply stop. If the cache is already cold, it does nothing rather than trigger a rewrite.
+**It fails closed.** Hooks always exit successfully and never block a prompt. If the waker dies, pings simply stop until the next turn end. Headless runs (`claude -p`, Agent SDK) are never registered.
 
 ## 12. Troubleshooting
 
 | Symptom | Cause and fix |
 | :--- | :--- |
-| `[no monitor]` in status | Plugin monitors are experimental; they only run in interactive CLI sessions and were not started for a `claude --resume` session in testing. Nothing to do: with `fallbackCron` on (default), the first time that session has something to warm, Claude is asked once to schedule an in-session keep-alive task (you will see one `CronCreate` call). `ccw set fallbackCron false` turns that off; `/cache-warm:config engine cron` forces it |
-| Session not listed | It registers on its first prompt after the plugin was enabled |
-| Always `no-work` | Correct when nothing runs in the background. Use `ccw when always` (optionally `--session`) to warm plain idle sessions too |
-| `warning: interval … is not shorter than the … TTL` | That session uses the 5-minute cache. Use `ccw interval auto`, or enable the 1-hour TTL |
-| `expired` right after a laptop sleep | The cache timed out while the machine slept. The next real turn rebuilds it; warming resumes after that |
-| Pings sent but not "verified as cache hits" on the dashboard | Something else invalidated the cache in between (model switch, `/compact`, MCP tools changing). See `/usage` for the likely cause |
-| Status line segment missing | It appears after the next turn. `ccw statusline` shows which settings file is in effect |
+| Session not listed | It registers on its first hook event after the plugin was enabled. `/reload-plugins` in an old session |
+| Always `no-work` | Correct when nothing is pending in the background. `ccw when always` (optionally `--session` / `--project`) to warm plain idle sessions |
+| `warming` but the dashboard says "no timer yet" | The waker starts when the current turn ends |
+| `warning: interval … is not shorter than the … TTL` | That session uses the 5-minute cache. `ccw interval auto`, or enable the 1-hour TTL |
+| `expired` right after a laptop sleep | The cache timed out while the machine slept. The next real turn rebuilds it |
+| Pings not "verified as cache hits" on the dashboard | Something else invalidated the cache in between (model switch, `/compact`, MCP tools changing). `/usage` names the likely cause |
+| Status line segment missing in one folder | That folder has its own status line. `ccw statusline` (run there) says which file wins; `ccw statusline install --file=<that file>` |
+| Status line blank in a new folder | Claude Code keeps it blank until you trust the folder |
+| A settings change didn't apply | `ccw config --session` shows which scope each value comes from; a narrower scope may override it |
 
-`ccw events 30` prints the recent log: pings, skips with their reason, config changes.
+`ccw events 30` prints the recent log: pings with their reason, config changes, migrations.
 
 ## 13. Command reference
 
 | Slash command | Shell | |
 | :--- | :--- | :--- |
-| `/cache-warm:on [session]` | `ccw on [--session]` | Enable |
-| `/cache-warm:off [session]` | `ccw off [--session]` | Disable |
+| `/cache-warm:on [scope]` | `ccw on [scope]` | Enable |
+| `/cache-warm:off [scope]` | `ccw off [scope]` | Disable |
 | `/cache-warm:status` | `ccw status [--all] [--json]` | Sessions and countdowns |
 | `/cache-warm:dashboard` | `ccw dashboard [--no-open]` | Web dashboard |
 | `/cache-warm:statusline [install\|newline\|uninstall]` | `ccw statusline …` | Status line segment |
-| `/cache-warm:config …` | | Natural-language settings, cron fallback |
-| | `ccw when <background-work\|always> [--session]` | Warming policy |
-| | `ccw interval <minutes\|auto> [--session]` | Ping interval |
-| | `ccw set <key> <value> [--session]` | `maxIdleMinutes`, `minContextTokens`, `engine`, `dashboardPort` |
-| | `ccw follow [--session=<id>]` | Drop per-session overrides |
+| `/cache-warm:config …` | | Natural-language settings |
+| | `ccw config [scope]` | Effective settings and their sources |
+| | `ccw scopes` | Every scope that has settings |
+| | `ccw when <background-work\|always> [scope]` | Warming policy |
+| | `ccw interval <minutes\|auto> [scope]` | Ping interval |
+| | `ccw set <key> <value> [scope]` | `enabled`, `warmWhen`, `intervalMinutes`, `maxIdleMinutes`, `minContextTokens`, `dashboardPort` (global) |
+| | `ccw unset <key> [scope]` / `ccw reset [scope]` | Inherit again |
 | | `ccw doctor`, `ccw events [n]` | Diagnostics |
 
-All state lives in `~/.claude-cache-warm/` (`CCW_HOME` overrides it). Delete the directory to reset everything.
+All state lives in `~/.claude-cache-warm/` (`CCW_HOME` overrides it). [CONTRACT.md](CONTRACT.md) documents every file.

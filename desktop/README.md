@@ -6,9 +6,11 @@ A thin [Tauri v2](https://v2.tauri.app) tray app. The dashboard
 - shows a tray icon with **Open dashboard**, **Warming enabled** (check),
   **Warm only during background work** (check), **Interval**
   (Auto / 4 / 15 / 30 / 50 min), the active hotkeys (info lines) and **Quit**;
-- edits `enabled`, `warmWhen` and `intervalMinutes` in `config.json` (atomic temp-file +
-  rename, other keys preserved, created with contract defaults if missing).
-  `warmWhen` is `"background-work"` (checked, also when the key is absent) or `"always"`;
+- edits the **global** scope of `config.json` (`global.enabled`, `global.warmWhen`,
+  `global.intervalMinutes`) under the same `config.json.lock` the plugin uses, with an atomic
+  temp-file + rename; every other scope is preserved. The menu shows the effective global values
+  (defaults < plugin tab < `global`). Surface, project and session scopes are edited in the
+  dashboard. See [docs/CONTRACT.md](../docs/CONTRACT.md);
 - registers system-wide hotkeys (see [Hotkeys](#hotkeys)) and shows the state in the
   tray tooltip: `Claude Cache Warm — warming ON/OFF` (kept in sync with external edits
   through the 3 s config poll);
@@ -49,7 +51,7 @@ Tauri validates resource paths at compile time, which would break `cargo check` 
 
 | Default | Action |
 | :--- | :--- |
-| `Ctrl+Alt+W` | Toggle `enabled` in `config.json` (same code path as the tray check item). Updates the tooltip and shows a native notification "Cache warming ON" / "OFF". |
+| `Ctrl+Alt+W` | Toggle global `enabled` in `config.json` (same code path as the tray check item). Updates the tooltip and shows a native notification "Cache warming ON" / "OFF". |
 | `Ctrl+Alt+D` | Show / focus the dashboard window (same as **Open dashboard**). |
 
 Override them in `<state dir>/desktop.json` (`~/.claude-cache-warm/desktop.json`, or

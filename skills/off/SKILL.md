@@ -1,10 +1,12 @@
 ---
-description: Turn prompt-cache warming off (add "session" to switch only this session)
-argument-hint: "[session]"
+description: Turn prompt-cache warming off (globally, or for this session / project / desktop / cli)
+argument-hint: "[session | project | desktop | cli]"
 disable-model-invocation: true
 allowed-tools: Bash(node:*)
 ---
 
-Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/ccw.mjs" off` — append `--session` if the arguments below say "session". Confirm in one line. If a cache-warm cron task exists in this session (check with CronList), delete it with CronDelete.
+Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/ccw.mjs" off <scope flag>` and confirm in one line which scope is now off.
+
+Scope words in the arguments map to flags: "session" or "this session" → `--session`; "project" or "this folder" → `--project`; "desktop" → `--desktop`; "cli" or "terminal" → `--cli`; "ide" → `--ide`; nothing → global.
 
 Arguments: $ARGUMENTS

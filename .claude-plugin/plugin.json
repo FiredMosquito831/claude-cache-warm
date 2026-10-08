@@ -1,8 +1,8 @@
 {
   "name": "cache-warm",
   "displayName": "Cache Warm",
-  "version": "0.2.0",
-  "description": "Keeps the prompt cache of idle Claude Code sessions warm with activity-aware keep-alive pings. Configurable interval, on/off switch, idle cap, cost estimates, web dashboard.",
+  "version": "0.3.0",
+  "description": "Keeps the prompt cache of idle Claude Code sessions warm. Works the same in the CLI, IDE and Desktop app; per-session, per-project, per-surface and global settings.",
   "author": {
     "name": "FiredMosquito831",
     "url": "https://github.com/FiredMosquito831"
@@ -17,20 +17,17 @@
     "cost",
     "latency"
   ],
-  "experimental": {
-    "monitors": "./monitors/monitors.json"
-  },
   "userConfig": {
     "enabled": {
       "type": "boolean",
       "title": "Warming on",
-      "description": "Master switch. Also switchable any time with /cache-warm:on and /cache-warm:off.",
+      "description": "Global master switch. Per-surface, per-project and per-session settings can override it (ccw or the dashboard).",
       "default": true
     },
     "warm_when": {
       "type": "string",
       "title": "Warm a session",
-      "description": "background-work: only while a subagent or background task is running in it (recommended). always: any idle session.",
+      "description": "background-work: only while a subagent, background task or scheduled task is pending (recommended). always: any idle session.",
       "default": "background-work",
       "options": [
         "background-work",
@@ -40,13 +37,13 @@
     "interval_minutes": {
       "type": "string",
       "title": "Ping interval (minutes)",
-      "description": "auto = 50 on a 1-hour cache, 4 on a 5-minute cache. Otherwise a number from 1 to 59, shorter than your cache TTL.",
+      "description": "Counted from the conversation's last request. auto = 50 on a 1-hour cache, 4 on a 5-minute cache. Otherwise 1 to 59, shorter than the cache TTL.",
       "default": "auto"
     },
     "max_idle_minutes": {
       "type": "number",
       "title": "Stop after idle (minutes)",
-      "description": "Stop pinging a session once you have been away this long. 0 = never stop.",
+      "description": "Stop pinging once nobody has typed and no real work has happened for this long. 0 = never stop.",
       "default": 180,
       "min": 0
     },
@@ -57,11 +54,17 @@
       "default": 20000,
       "min": 0
     },
-    "fallback_cron": {
-      "type": "boolean",
-      "title": "In-session fallback when no monitor",
-      "description": "If Claude Code did not start the plugin monitor for a session, ask Claude once to schedule an in-session keep-alive task instead (one tool call).",
-      "default": true
+    "desktop_mode": {
+      "type": "string",
+      "title": "Desktop app sessions",
+      "description": "same-as-cli: follow the settings above. off / background-work / always: override them for sessions in the Claude desktop app only.",
+      "default": "same-as-cli",
+      "options": [
+        "same-as-cli",
+        "off",
+        "background-work",
+        "always"
+      ]
     },
     "dashboard_port": {
       "type": "number",

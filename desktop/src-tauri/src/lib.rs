@@ -68,10 +68,10 @@ fn config_path() -> PathBuf {
 fn default_config() -> Map<String, Value> {
     match json!({
         "enabled": true,
+        "warmWhen": WARM_BACKGROUND,
         "intervalMinutes": "auto",
         "maxIdleMinutes": 180,
         "minContextTokens": 20000,
-        "engine": "monitor",
         "dashboardPort": DEFAULT_PORT
     }) {
         Value::Object(map) => map,
@@ -79,24 +79,97 @@ fn default_config() -> Map<String, Value> {
     }
 }
 
-/// Reads config.json. `None` when the file is missing or not a JSON object.
-fn read_config_file() -> Option<Map<String, Value>> {
-    let text = fs::read_to_string(config_path()).ok()?;
+fn read_json_object(path: &Path) -> Option<Map<String, Value>> {
+    let text = fs::read_to_string(path).ok()?;
     match serde_json::from_str::<Value>(text.trim_start_matches('\u{feff}')).ok()? {
         Value::Object(map) => Some(map),
         _ => None,
     }
 }
 
-/// Contract defaults overlaid with whatever is on disk (unknown keys are preserved).
+/// Reads config.json. `None` when the file is missing or not a JSON object.
+fn read_config_file() -> Option<Map<String, Value>> {
+    read_json_object(&config_path())
+}
+
+/// Plugin-tab values (strings, as Claude Code passes them) in config types.
+fn plugin_tab_layer() -> Map<String, Value> {
+    let mut out = Map::new();
+    let raw = read_json_object(&state_dir().join("plugin-options.json"))
+        .and_then(|m| m.get("raw").and_then(Value::as_object).cloned())
+        .unwrap_or_default();
+    for (k, v) in raw {
+        let Some(text) = v.as_str() else { continue };
+        let value = match k.as_str() {
+            "enabled" => Value::Bool(text == "true"),
+            "warmWhen" => Value::String(text.to_string()),
+            "intervalMinutes" if text == "auto" => Value::String("auto".into()),
+            "intervalMinutes" | "maxIdleMinutes" | "minContextTokens" | "dashboardPort" => match text.parse::<u64>() {
+                Ok(n) => json!(n),
+                Err(_) => continue,
+            },
+            _ => continue,
+        };
+        out.insert(k, value);
+    }
+    out
+}
+
+/// The effective global settings: defaults < plugin tab < config.json "global".
+/// (Surface, project and session scopes are edited in the dashboard; the tray only drives global.)
 fn load_config() -> Map<String, Value> {
     let mut cfg = default_config();
-    if let Some(on_disk) = read_config_file() {
-        for (k, v) in on_disk {
+    for (k, v) in plugin_tab_layer() {
+        cfg.insert(k, v);
+    }
+    if let Some(global) = read_config_file().and_then(|m| m.get("global").and_then(Value::as_object).cloned()) {
+        for (k, v) in global {
             cfg.insert(k, v);
         }
     }
     cfg
+}
+
+/// The same cross-process lock the Node side uses: a `config.json.lock` directory.
+/// Stale after 5 s; after 2 s of waiting we write anyway rather than hang the tray.
+fn with_config_lock<T>(f: impl FnOnce() -> T) -> T {
+    let lock = config_path().with_file_name("config.json.lock");
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    let mut held = false;
+    loop {
+        match fs::create_dir(&lock) {
+            Ok(()) => {
+                held = true;
+                break;
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                let stale = fs::metadata(&lock)
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .and_then(|t| t.elapsed().ok())
+                    .is_some_and(|age| age > Duration::from_secs(5));
+                if stale {
+                    let _ = fs::remove_dir_all(&lock);
+                    continue;
+                }
+                if std::time::Instant::now() > deadline {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(15));
+            }
+            Err(_) => {
+                let _ = fs::create_dir_all(state_dir());
+                if std::time::Instant::now() > deadline {
+                    break;
+                }
+            }
+        }
+    }
+    let out = f();
+    if held {
+        let _ = fs::remove_dir_all(&lock);
+    }
+    out
 }
 
 /// Atomic write per the contract: `<file>.<pid>.tmp`, then rename over the target.
@@ -118,13 +191,26 @@ fn write_config(cfg: &Map<String, Value>) -> std::io::Result<()> {
     })
 }
 
-/// Read-modify-write a single key, keeping every other key intact.
+/// Set one global setting in config.json (schema 2), keeping every other scope intact.
+/// The top-level `enabled: false` / `fallbackCron: false` are the switch-off for
+/// cache-warm 0.2 processes, never a setting, so they are always written as-is.
 fn patch_config(key: &str, value: Value) {
-    let mut cfg = load_config();
-    cfg.insert(key.to_string(), value);
-    if let Err(err) = write_config(&cfg) {
-        eprintln!("[ccw] failed to write {}: {err}", config_path().display());
-    }
+    with_config_lock(|| {
+        let mut file = read_config_file().unwrap_or_default();
+        if file.get("schema").and_then(Value::as_u64) != Some(2) {
+            // Not migrated yet (no session has run cache-warm 0.3): leave it to the plugin.
+            eprintln!("[ccw] config.json is not schema 2 yet; start a Claude Code session with cache-warm 0.3 first");
+            return;
+        }
+        let mut global = file.get("global").and_then(Value::as_object).cloned().unwrap_or_default();
+        global.insert(key.to_string(), value);
+        file.insert("global".into(), Value::Object(global));
+        file.insert("enabled".into(), Value::Bool(false));
+        file.insert("fallbackCron".into(), Value::Bool(false));
+        if let Err(err) = write_config(&file) {
+            eprintln!("[ccw] failed to write {}: {err}", config_path().display());
+        }
+    });
 }
 
 fn config_mtime() -> Option<SystemTime> {
@@ -596,10 +682,13 @@ pub fn run() {
             }
         })
         .setup(|app| {
-            // Create config.json with the contract defaults on first run.
+            // Create an empty schema-2 config.json on first run (the plugin fills it in).
             if read_config_file().is_none() && !config_path().exists() {
-                if let Err(err) = write_config(&default_config()) {
-                    eprintln!("[ccw] failed to create {}: {err}", config_path().display());
+                let skeleton = json!({ "schema": 2, "global": {}, "surfaces": {}, "projects": {}, "enabled": false, "fallbackCron": false });
+                if let Value::Object(map) = skeleton {
+                    if let Err(err) = write_config(&map) {
+                        eprintln!("[ccw] failed to create {}: {err}", config_path().display());
+                    }
                 }
             }
 
