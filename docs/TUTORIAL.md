@@ -96,11 +96,14 @@ ccw config --session        # what this session uses, and which scope each value
 ccw scopes                  # every scope that has settings
 ```
 
+**Default scope.** Run inside a Claude Code session (including by Claude, or through `/cache-warm:on|off`), a `ccw` change without a scope flag applies to **that session's surface only**: in the Desktop app it changes Desktop sessions, in a terminal session it changes CLI sessions. One can never switch the other off by accident. To change both, say so with `--global`. From a plain terminal outside Claude Code, no flag means global.
+
 The flags work on every settings command:
 
 | Flag | Scope |
 | :--- | :--- |
-| (none) | global |
+| (none) | this session's surface inside Claude Code; global from a plain terminal |
+| `--global` | every session |
 | `--cli`, `--desktop`, `--ide` | that surface |
 | `--project` | the current folder and below (`--project=<folder>` for another) |
 | `--session` | the session this shell belongs to (`--session=<id prefix>` for another) |

@@ -23,6 +23,7 @@ const lib = await import('../scripts/lib.mjs');
 const baseEnv = { ...process.env, CCW_HOME: home, CCW_PROJECTS_DIR: projects, CLAUDE_PID: String(process.pid), CCW_POLL_MS: '100' };
 for (const k of Object.keys(baseEnv)) if (k.startsWith('CLAUDE_PLUGIN_OPTION_') || k === 'FORCE_PROMPT_CACHING_5M') delete baseEnv[k];
 delete baseEnv.CLAUDE_CODE_SESSION_ID;
+delete baseEnv.CLAUDE_CODE_ENTRYPOINT; // the runner may itself be inside a Claude Code session
 
 const readJson = (f) => JSON.parse(fs.readFileSync(f, 'utf8'));
 const sessionFile = (id) => path.join(home, 'sessions', `${id}.json`);
@@ -305,6 +306,22 @@ test('sessions are isolated: a desktop-only setting warms the desktop session an
   assert.equal(status('cli-1').status, 'off');
   ccw('reset', '--desktop');
   ccw('reset', '--cli');
+});
+
+test('inside a session, an unscoped change stays on that surface; --global is explicit', () => {
+  const inDesktop = (...a) => spawnSync(process.execPath, [path.join(ROOT, 'scripts/ccw.mjs'), ...a], { env: { ...baseEnv, CLAUDE_CODE_ENTRYPOINT: 'claude-desktop-3p' }, encoding: 'utf8', cwd: projA });
+  const r = inDesktop('off');
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /desktop sessions; only desktop sessions, use --global for all/);
+  assert.equal(status('desk-1').settings.enabled, false);
+  assert.equal(status('cli-1').settings.enabled, true, 'a desktop session must not switch off CLI sessions');
+  assert.equal(readJson(path.join(home, 'config.json')).global.enabled ?? true, true);
+  inDesktop('reset');
+  assert.equal(status('desk-1').settings.enabled, true);
+  assert.equal(inDesktop('off', '--global').status, 0);
+  assert.equal(status('cli-1').settings.enabled, false, '--global reaches every surface');
+  ccw('unset', 'enabled');
+  assert.equal(status('cli-1').settings.enabled, true);
 });
 
 test('the config file survives concurrent writers (no lost updates)', async () => {

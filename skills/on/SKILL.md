@@ -7,7 +7,7 @@ allowed-tools: Bash(node:*)
 
 Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/ccw.mjs" on <scope flag>`, then `node "${CLAUDE_PLUGIN_ROOT}/scripts/ccw.mjs" config`. Relay the result in one or two lines.
 
-Scope words in the arguments map to flags: "session" or "this session" → `--session`; "project" or "this folder" → `--project`; "desktop" → `--desktop`; "cli" or "terminal" → `--cli`; "ide" → `--ide`; nothing → global.
+Scope words in the arguments map to flags: "session" or "this session" → `--session`; "project" or "this folder" → `--project`; "desktop" → `--desktop`; "cli" or "terminal" → `--cli`; "ide" → `--ide`; "global", "everywhere" or "all" → `--global`. With no scope word, pass no flag: ccw then changes only this session's surface (CLI or desktop app), never the other one.
 
 Never create scheduled tasks (CronCreate) for cache warming: the plugin's own hooks do the timing.
 

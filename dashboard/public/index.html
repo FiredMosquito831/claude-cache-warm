@@ -338,7 +338,10 @@ function renderConfig() {
     return el('label', { className: 'field' }, label, input);
   });
   const reset = el('button', { type: 'button', textContent: 'Reset this scope', onclick: async () => { try { await post('/api/scope', { scope: sc.scope, reset: true }); toast('Cleared ' + sc.label); } catch (e) { toast(e.message); } refreshState(); } });
-  f.replaceChildren(...fields, el('div', { style: 'display:flex;gap:8px' }, el('button', { className: 'primary', type: 'submit', textContent: 'Save ' + (isGlobal ? 'global' : sc.scope.startsWith('project:') ? 'project' : sc.label) }), reset));
+  const reach = isGlobal ? 'Global: every CLI, Desktop app and IDE session, unless its own tab sets a value.'
+    : sc.scope.startsWith('project:') ? 'Sessions started in this folder or below, on any surface.'
+    : `Only ${sc.label} sessions. The other surfaces are not affected.`;
+  f.replaceChildren(el('p', { className: 'src', style: 'grid-column:1/-1;margin:0', textContent: reach }), ...fields, el('div', { style: 'display:flex;gap:8px' }, el('button', { className: 'primary', type: 'submit', textContent: 'Save ' + (isGlobal ? 'global' : sc.scope.startsWith('project:') ? 'project' : sc.label) }), reset));
   f.onsubmit = (e) => {
     e.preventDefault();
     const patch = {};

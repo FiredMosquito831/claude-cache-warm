@@ -19,7 +19,7 @@ Control the cache-warm plugin through its CLI: `node "${CLAUDE_PLUGIN_ROOT}/scri
 | Open the dashboard | `dashboard` |
 | Something seems broken | `doctor`, then `events 30` |
 
-Scope flags (default: global): `--session` (this session), `--project` (the current folder and its subfolders; `--project=<folder>` for another), `--cli`, `--desktop`, `--ide`. Most specific wins: session > project > surface > global > plugin tab > defaults. Change only the scope the user asked for; never change global settings to fix one session.
+Scope flags (default inside a session: this session's surface, CLI or desktop app, so one never changes the other; `--global` for both): `--session` (this session), `--project` (the current folder and its subfolders; `--project=<folder>` for another), `--cli`, `--desktop`, `--ide`. Most specific wins: session > project > surface > global > plugin tab > defaults. Change only the scope the user asked for. Use `--global` only when the user explicitly asks for every session (CLI and desktop app); never to fix one session or one surface.
 
 Changes apply live; never tell the user to restart. Never create scheduled tasks (CronCreate) for cache warming: the plugin's Stop hook times the pings and resets the timer on every request.
 

@@ -24,6 +24,7 @@ import {
   resolveSettings,
   sessionViews,
   setScoped,
+  surfaceFromEntrypoint,
 } from './lib.mjs';
 import { DEFAULT_REFRESH_SECONDS, installStatusline, statuslineStatus, uninstallStatusline } from './statusline-install.mjs';
 
@@ -49,7 +50,9 @@ const HELP = `ccw ${VERSION} - keep Claude Code's prompt cache warm while a sess
   ccw reset [scope]                 drop every setting at that scope
   ccw scopes                        list every scope that has settings
 
-  scope (default: global)
+  scope (default: inside a Claude Code session, that session's surface (cli or desktop),
+         so the two never change each other by accident; from a plain terminal, global)
+    --global                        every session
     --cli | --desktop | --ide       sessions on that surface
     --project[=<folder>]            sessions in that folder or below (default folder: current directory)
     --session[=<id-prefix>]         one session (default: the session this shell belongs to)
@@ -72,11 +75,21 @@ function sessionByPrefix(prefix) {
   return matches[0].sessionId;
 }
 
-/** The scope named by the flags, as a scope string for lib.setScoped. */
-function scopeFromFlags() {
+// Inside a Claude Code session (its Bash tool sets CLAUDE_CODE_ENTRYPOINT), an unscoped
+// change applies to that session's surface only, so a Desktop session can't switch off
+// CLI sessions by accident (or the other way round). Both at once needs --global.
+const hereSurface = (() => {
+  const s = process.env.CLAUDE_CODE_ENTRYPOINT ? surfaceFromEntrypoint(process.env.CLAUDE_CODE_ENTRYPOINT) : null;
+  return SURFACES.includes(s) ? s : null;
+})();
+
+/** The scope named by the flags, or null when none was given. */
+function explicitScope() {
   const found = [];
   for (const a of args) {
-    if (a === '--session' || a.startsWith('--session=')) {
+    if (a === '--global') {
+      found.push('global');
+    } else if (a === '--session' || a.startsWith('--session=')) {
       const prefix = a.split('=')[1];
       if (prefix) found.push(`session:${sessionByPrefix(prefix)}`);
       else if (thisSession && loadSession(thisSession)) found.push(`session:${thisSession}`);
@@ -90,7 +103,12 @@ function scopeFromFlags() {
     }
   }
   if (found.length > 1) throw new Error('pick one scope');
-  return found[0] || 'global';
+  return found[0] || null;
+}
+
+/** Scope for a change: the explicit one, else this session's surface, else global (plain terminal). */
+function scopeFromFlags() {
+  return explicitScope() || hereSurface || 'global';
 }
 
 const describeScope = (s) => (s === 'global' ? 'global' : s.startsWith('session:') ? `session ${s.slice(8, 16)}` : s.startsWith('project:') ? `project ${s.slice(8)}` : `${s} sessions`);
@@ -106,7 +124,8 @@ function parseValue(key, raw) {
 function set(patch) {
   const scope = scopeFromFlags();
   setScoped(scope, patch);
-  return describeScope(scope);
+  const implicit = !explicitScope() && hereSurface ? `; only ${hereSurface} sessions, use --global for all` : '';
+  return describeScope(scope) + implicit;
 }
 
 // ------------------------------------------------------------------- status
@@ -166,12 +185,12 @@ function printStatus() {
 }
 
 function printConfig() {
-  const scope = scopeFromFlags();
+  const scope = explicitScope() || 'global';
   let ctx = {};
   if (scope.startsWith('session:')) ctx = { session: loadSession(scope.slice(8)) };
   else if (scope.startsWith('project:')) ctx = { cwd: scope.slice(8) };
   else if (SURFACES.includes(scope)) ctx = { surface: scope };
-  else if (thisSession && loadSession(thisSession) && !flags.has('--global')) ctx = { session: loadSession(thisSession) };
+  else if (!explicitScope() && thisSession && loadSession(thisSession)) ctx = { session: loadSession(thisSession) };
   const { values, sources, project } = resolveSettings(ctx);
   const label = ctx.session ? `session ${ctx.session.sessionId.slice(0, 8)} (${ctx.session.surface || 'cli'}${project ? `, project ${project}` : ''})` : describeScope(scope);
   console.log(`effective settings for ${label}:`);

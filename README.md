@@ -81,7 +81,7 @@ session  >  project folder  >  surface (cli | desktop | ide)  >  global  >  plug
 ```
 
 ```sh
-ccw interval 30                       # global
+ccw interval 30 --global              # every session (the default only from a plain terminal)
 ccw when always --desktop             # every Desktop-app session
 ccw off --cli                         # every CLI session
 ccw interval 20 --project             # this folder and everything below it
@@ -89,6 +89,8 @@ ccw set maxIdleMinutes 600 --session  # just this session
 ccw config --session                  # effective values, and which scope each comes from
 ccw reset --desktop                   # that scope inherits everything again
 ```
+
+**CLI and Desktop never overlap by accident.** Run inside a Claude Code session (or by Claude, or via `/cache-warm:on|off`), an unscoped `ccw` change applies only to that session's surface: `ccw off` in the Desktop app turns off Desktop sessions, not your CLI ones. Changing every surface at once needs `--global`. From a plain terminal, unscoped means global. The dashboard says on each tab which sessions it reaches.
 
 The plugin tab (`/plugin` → cache-warm → configure) sets the global layer plus a "Desktop app sessions" override. A value you change there is applied at the next session start and wins over the older override it would otherwise sit behind; values you didn't change never undo edits made with `ccw` or the dashboard.
 
