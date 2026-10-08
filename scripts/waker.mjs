@@ -73,6 +73,13 @@ async function main() {
     };
   });
 
+  // A Claude Code that doesn't send background_tasks (before 2.1.145) may not know
+  // asyncRewake either, and would run us as a blocking Stop hook: never sleep there.
+  if (!Array.isArray(input.background_tasks)) {
+    lib.logEvent({ type: 'waker_skipped', sessionId: id, reason: 'Stop input has no background_tasks; Claude Code too old to wake safely' });
+    return exit(0);
+  }
+
   // 2. Claim the session's timer slot. A newer prompt or Stop takes it away from us.
   const gen = `${process.pid}.${startedAt}`;
   lib.updateState(id, (s) => ({ ...s, waker: { gen, pid: process.pid, startedAt, heartbeatAt: startedAt, status: 'sleeping', nextPingAt: null } }));
