@@ -294,6 +294,7 @@ const FIELDS = [
   ['maxIdleMinutes', 'Stop after idle (minutes, 0 = never)', null, Number],
   ['minContextTokens', 'Skip sessions below (tokens)', null, Number],
   ['dashboardPort', 'Dashboard port', null, Number],
+  ['statuslineSegments', 'Status line parts (comma-separated, in order)', null, (v) => v.split(',').map((x) => x.trim()).filter(Boolean)],
   ['statusline', 'Status line segment', [['auto', 'Auto: on every status line, create one if none'], ['wrap-only', 'Only add to existing status lines'], ['off', 'Off: restore the originals']], (v) => v],
 ];
 
@@ -324,7 +325,7 @@ function renderConfig() {
     if (sc.own[k] === undefined) return `${fmtSetting(k, sc.values[k])} from ${SCOPE_LABEL(src)}`;
     return isGlobal ? `plugin tab or default` : 'the scope below';
   };
-  const fields = FIELDS.filter(([k]) => isGlobal || !['dashboardPort', 'statusline'].includes(k)).map(([k, label, options, parse]) => {
+  const fields = FIELDS.filter(([k]) => isGlobal || !['dashboardPort', 'statusline', 'statuslineSegments'].includes(k)).map(([k, label, options, parse]) => {
     const own = sc.own[k];
     let input;
     if (options) {
@@ -333,7 +334,9 @@ function renderConfig() {
       if (cur && ![...input.options].some((o) => o.value === cur)) input.append(el('option', { value: cur, textContent: fmtSetting(k, own) }));
       input.value = cur;
     } else {
-      input = el('input', { type: 'number', name: k, min: 0, step: k === 'minContextTokens' ? 1000 : k === 'dashboardPort' ? 1 : 10, value: own ?? '', placeholder: 'Inherit (' + below(k) + ')' });
+      input = k === 'statuslineSegments'
+        ? el('input', { type: 'text', name: k, value: Array.isArray(own) ? own.join(',') : '', placeholder: 'Inherit (' + below(k) + ')' })
+        : el('input', { type: 'number', name: k, min: 0, step: k === 'minContextTokens' ? 1000 : k === 'dashboardPort' ? 1 : 10, value: own ?? '', placeholder: 'Inherit (' + below(k) + ')' });
     }
     input.dataset.parse = k;
     return el('label', { className: 'field' }, label, input);

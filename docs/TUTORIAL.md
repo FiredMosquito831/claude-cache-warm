@@ -179,6 +179,8 @@ or `ccw dashboard`. It starts a small local server (loopback only) and opens the
 
 ## 9. The status line
 
+Choose and order the parts: `ccw set statuslineSegments model,folder,branch,warm,context,cache,fill,limits` (also in the plugin tab and the dashboard's Global tab). Parts: `model` (with effort), `folder` (with the subfolder you're in), `branch`, `pr` (review state), `warm`, `context`, `cache`, `fill` (context window used), `limits` (5-hour and 7-day subscription usage), `cost` (a list-price estimate, off by default because it misleads on a subscription). Parts without data are left out. A longer line reads better on its own row: `ccw statusline install --newline`.
+
 It's on by default and maintained automatically (setting `statusline`, global only):
 
 | Value | What happens at each session start |

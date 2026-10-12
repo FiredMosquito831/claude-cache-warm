@@ -19,6 +19,7 @@ fs.mkdirSync(projB, { recursive: true });
 process.env.CCW_HOME = home;
 process.env.CCW_PROJECTS_DIR = projects;
 const lib = await import('../scripts/lib.mjs');
+const sl = await import('../scripts/statusline.mjs');
 
 const claudeHome = path.join(tmp, 'claude-home'); // never the real ~/.claude: hooks now manage the status line
 fs.mkdirSync(claudeHome, { recursive: true });
@@ -489,4 +490,44 @@ test('automatic status line: wraps on session start, overlays a shared project l
   assert.equal(readJson(local).statusLine, undefined, 'overlay removed');
   hook('SessionStart', 'sl-1', { source: 'clear', cwd: proj });
   assert.equal(readJson(settings).statusLine.command, 'echo NEWER', 'off stays off across session starts');
+});
+
+test('status line parts: model, folder, git branch, PR, limits, fill; chosen order; validated', () => {
+  const repo = path.join(tmp, 'seg-repo');
+  const sub = path.join(repo, 'scripts');
+  fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+  fs.mkdirSync(sub, { recursive: true });
+  fs.writeFileSync(path.join(repo, '.git', 'HEAD'), 'ref: refs/heads/feature-x\n');
+  const plain = (x) => x.replace(/\x1b\[[0-9;]*m/g, '');
+  const now = Date.now();
+  const data = {
+    session_id: 'seg-x',
+    model: { id: 'claude-opus-5-5' },
+    effort: { level: 'high' },
+    workspace: { current_dir: repo, project_dir: repo },
+    context_window: { total_input_tokens: 200_000, context_window_size: 1_000_000, used_percentage: 20 },
+    rate_limits: { five_hour: { used_percentage: 85, resets_at: Math.floor(now / 1000) + 4000 }, seven_day: { used_percentage: 12 } },
+    pr: { number: 42, review_state: 'changes_requested' },
+  };
+  const line = plain(sl.buildSegment(data, now));
+  assert.match(line, /^Opus 5\.5 · high │ seg-repo │ ⎇ feature-x │ PR #42 changes requested/);
+  assert.match(line, /20% of 1M/);
+  assert.match(line, /5h 85% \(\d+[hm] /);
+  assert.match(line, /7d 12%/);
+  assert.ok(!line.includes('est.'), 'cost is off by default');
+
+  const inSub = plain(sl.buildSegment({ ...data, workspace: { current_dir: sub, project_dir: repo } }, now));
+  assert.match(inSub, /seg-repo › scripts/, 'shows where in the project you are');
+
+  assert.equal(ccw('set', 'statuslineSegments', 'folder,warm,fill').status, 0);
+  const picked = plain(sl.buildSegment(data, now));
+  assert.match(picked, /^seg-repo │ /);
+  assert.ok(!picked.includes('Opus') && !picked.includes('⎇') && !picked.includes('PR #'), 'only the chosen parts');
+  assert.ok(picked.endsWith('20% of 1M'), 'in the chosen order');
+
+  assert.notEqual(ccw('set', 'statuslineSegments', 'folder,nonsense').status, 0);
+  assert.notEqual(ccw('set', 'statuslineSegments', ' , ').status, 0);
+  assert.deepEqual(lib.resolveSettings({}).values.statuslineSegments, ['folder', 'warm', 'fill']);
+  ccw('unset', 'statuslineSegments');
+  assert.deepEqual(lib.resolveSettings({}).values.statuslineSegments, lib.DEFAULTS.statuslineSegments);
 });

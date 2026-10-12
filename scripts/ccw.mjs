@@ -9,6 +9,7 @@ import {
   GLOBAL_ONLY_KEYS,
   HOME,
   SCOPED_KEYS,
+  STATUS_SEGMENTS,
   SURFACES,
   VERSION,
   ensureMigrated,
@@ -65,6 +66,8 @@ const HELP = `ccw ${VERSION} - keep Claude Code's prompt cache warm while a sess
                                     checked against the transcript, then settings go back
   ccw dashboard [--no-open]         web dashboard: sessions, per-scope settings, analytics
   ccw statusline auto|wrap-only|off   keep the segment on your status lines automatically, or remove it
+                                    parts: ${STATUS_SEGMENTS.join(', ')}
+                                    choose and order them: ccw set statuslineSegments model,folder,warm
   ccw statusline [install|uninstall] [--newline] [--refresh=<s>] [--file=<settings.json>]
                                     add the cache segment to your status line (wraps, never replaces).
                                     Default: user settings, so every folder gets it; refresh every 5 s
@@ -123,14 +126,17 @@ function parseValue(key, raw) {
   if (raw === 'inherit' || raw === 'unset') return null;
   if (key === 'enabled') return raw === 'true' || raw === 'on';
   if (key === 'intervalMinutes' && raw === 'auto') return 'auto';
+  if (key === 'statuslineSegments') return raw.split(',').map((x) => x.trim()).filter(Boolean);
   if (key === 'warmWhen' || key === 'statusline') return raw;
   return Number(raw);
 }
 
 function set(patch) {
-  const scope = scopeFromFlags();
+  // Global-only settings always go to global, even from inside a session.
+  const globalOnly = Object.keys(patch).some((k) => GLOBAL_ONLY_KEYS.includes(k));
+  const scope = explicitScope() || (globalOnly ? 'global' : hereSurface) || 'global';
   setScoped(scope, patch);
-  const implicit = !explicitScope() && hereSurface ? `; only ${hereSurface} sessions, use --global for all` : '';
+  const implicit = !explicitScope() && scope === hereSurface && hereSurface ? `; only ${hereSurface} sessions, use --global for all` : '';
   return describeScope(scope) + implicit;
 }
 

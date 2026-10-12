@@ -55,6 +55,7 @@ rather than stall a hook). The tray app takes the same lock.
 | `minContextTokens` | number >= 0 | all |
 | `dashboardPort` | 1024-65535 | global only |
 | `statusline` | `auto` \| `wrap-only` \| `off` | global only |
+| `statuslineSegments` | list of `model`, `folder`, `branch`, `pr`, `warm`, `context`, `cache`, `fill`, `limits`, `cost` | global only |
 
 Effective value: the first defined in
 `session.overrides` > `projects[<deepest folder containing cwd>]` > `surfaces[<surface>]` > `global` > plugin tab (desktop part only for desktop sessions, then the global part) > built-in defaults.

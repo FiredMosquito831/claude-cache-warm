@@ -2,6 +2,13 @@
 
 Newest first. Each entry: what changed for you, why, and what you need to do.
 
+## 0.5.0 (2026-10-12)
+
+- **Richer status line.** It now shows the model (with effort level), the folder you're in (with the subfolder, when it differs from where Claude Code was launched), the git branch (read from `.git`, no extra process), the open PR's review state, the context window used (`fill`), and your 5-hour and 7-day limit usage. Limits turn yellow at 80% and red at 95%.
+- **You choose the parts and their order** with `statuslineSegments`: `ccw set statuslineSegments …`, the plugin tab, or the dashboard. `cost` is available but off by default, because it's a list-price estimate and misleading on a subscription.
+- **Fix:** `ccw set` of a global-only setting (for example `dashboardPort`, `statusline`) from inside a Claude Code session used to fail with a scope error. It now writes to global.
+- To do: update the plugin and `/reload-plugins`. The line is longer now, so `ccw statusline install --newline` is worth a look.
+
 ## 0.4.0 (2026-10-08)
 
 - **Self-test**: `/cache-warm:test` (or `ccw test`) pings the current session once, a minute after the turn ends, verifies the ping against the transcript and restores the session's settings. It works the same in the CLI and the Desktop app. If no ping arrives, the settings undo themselves after 15 minutes.

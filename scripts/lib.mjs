@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-export const VERSION = '0.4.0';
+export const VERSION = '0.5.0';
 
 export const HOME = process.env.CCW_HOME || path.join(os.homedir(), '.claude-cache-warm');
 export const CONFIG_PATH = path.join(HOME, 'config.json');
@@ -17,7 +17,12 @@ export const EVENTS_PATH = path.join(HOME, 'events.jsonl');
 /** Settings every scope (global, surface, project, session) may set. */
 export const SCOPED_KEYS = ['enabled', 'warmWhen', 'intervalMinutes', 'maxIdleMinutes', 'minContextTokens'];
 /** Settings that only make sense once per machine. */
-export const GLOBAL_ONLY_KEYS = ['dashboardPort', 'statusline'];
+export const GLOBAL_ONLY_KEYS = ['dashboardPort', 'statusline', 'statuslineSegments'];
+
+/** Parts the status line can show, in the order they appear when the setting lists them. */
+export const STATUS_SEGMENTS = ['model', 'folder', 'branch', 'pr', 'warm', 'context', 'cache', 'fill', 'limits', 'cost'];
+// `cost` is a list-price estimate: misleading on a subscription, so it is opt-in.
+export const DEFAULT_STATUS_SEGMENTS = ['model', 'folder', 'branch', 'pr', 'warm', 'context', 'cache', 'fill', 'limits'];
 
 export const DEFAULTS = Object.freeze({
   enabled: true,
@@ -27,6 +32,7 @@ export const DEFAULTS = Object.freeze({
   minContextTokens: 20000,
   dashboardPort: 4777,
   statusline: 'auto', // add the segment to every status line, creating one if there is none
+  statuslineSegments: DEFAULT_STATUS_SEGMENTS,
 });
 
 export const SURFACES = ['cli', 'desktop', 'ide'];
@@ -226,6 +232,14 @@ export function validateSettings(patch, { allowNull = false, globalOnly = true }
         if (Number.isFinite(+value) && +value >= 0) out.minContextTokens = +value;
         else errors.push('minContextTokens must be a number >= 0');
         break;
+      case 'statuslineSegments': {
+        const names = (Array.isArray(value) ? value : typeof value === 'string' ? value.split(',') : []).map((s) => String(s).trim()).filter(Boolean);
+        const unknown = names.filter((n) => !STATUS_SEGMENTS.includes(n));
+        if (!names.length) errors.push(`statuslineSegments needs at least one of: ${STATUS_SEGMENTS.join(', ')}`);
+        else if (unknown.length) errors.push(`unknown status line part(s): ${unknown.join(', ')} (available: ${STATUS_SEGMENTS.join(', ')})`);
+        else out.statuslineSegments = names;
+        break;
+      }
       case 'statusline':
         if (['auto', 'wrap-only', 'off'].includes(value)) out.statusline = value;
         else errors.push('statusline must be "auto", "wrap-only" or "off"');
@@ -402,6 +416,7 @@ const PLUGIN_OPTIONS = {
   DASHBOARD_PORT: 'dashboardPort',
   DESKTOP_MODE: 'desktopMode',
   STATUSLINE: 'statusline',
+  STATUSLINE_SEGMENTS: 'statuslineSegments',
 };
 
 /**
