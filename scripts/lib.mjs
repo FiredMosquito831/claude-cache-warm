@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-export const VERSION = '0.5.0';
+export const VERSION = '0.5.1';
 
 export const HOME = process.env.CCW_HOME || path.join(os.homedir(), '.claude-cache-warm');
 export const CONFIG_PATH = path.join(HOME, 'config.json');

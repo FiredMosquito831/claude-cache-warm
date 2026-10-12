@@ -531,3 +531,20 @@ test('status line parts: model, folder, git branch, PR, limits, fill; chosen ord
   ccw('unset', 'statuslineSegments');
   assert.deepEqual(lib.resolveSettings({}).values.statuslineSegments, lib.DEFAULTS.statuslineSegments);
 });
+
+test('status line wraps to the terminal width: whole parts, prefix line, one row without COLUMNS', () => {
+  const { wrapParts, renderLine, visibleWidth } = sl;
+  assert.deepEqual(wrapParts(['aaaa', 'bbbb', 'cccc'], ' │ ', 12), { first: '', rows: ['aaaa │ bbbb', 'cccc'] });
+  // text already on the first line (their output) leaves less room there
+  assert.deepEqual(wrapParts(['aaaa', 'bbbb', 'cccc'], ' │ ', 12, 5), { first: 'aaaa', rows: ['bbbb │ cccc'] });
+  assert.deepEqual(wrapParts(['aaaa', 'bbbb'], ' │ ', 12, 10), { first: '', rows: ['aaaa │ bbbb'] }, 'nothing fits on their line: start below');
+  assert.deepEqual(wrapParts(['aaaa', 'bbbb', 'cccc'], ' │ ', Infinity), { first: '', rows: ['aaaa │ bbbb │ cccc'] });
+  assert.equal(visibleWidth('\x1b[2mabc\x1b[0m'), 3, 'escape codes take no columns');
+  const parts = ['\x1b[32mone\x1b[0m', 'two', 'three'];
+  assert.equal(renderLine({ theirs: 'THEIRS', placement: 'append', parts, width: Infinity }).replace(/\x1b\[[0-9;]*m/g, ''), 'THEIRS │ one │ two │ three');
+  const wrapped = renderLine({ theirs: 'THEIRS', placement: 'append', parts, width: 14 }).replace(/\x1b\[[0-9;]*m/g, '');
+  assert.equal(wrapped, 'THEIRS │ one\ntwo │ three');
+  assert.equal(renderLine({ theirs: 'THEIRS', placement: 'newline', parts, width: Infinity }).replace(/\x1b\[[0-9;]*m/g, ''), 'THEIRS\none │ two │ three');
+  assert.equal(sl.columnsWidth({ COLUMNS: '' }), Infinity, 'no COLUMNS: one row, as before');
+  assert.equal(sl.columnsWidth({ COLUMNS: '100' }), 98);
+});
