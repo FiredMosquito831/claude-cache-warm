@@ -2,6 +2,11 @@
 
 Newest first. Each entry: what changed for you, why, and what you need to do.
 
+## 0.5.1 (2026-10-12)
+
+- **The status line wraps.** Claude Code gives a status line one row, and a long line got cut off on narrow terminals. The parts now wrap onto the next row at part boundaries, to the terminal width (Claude Code sets `COLUMNS`). A part is never split. Without `COLUMNS` the line stays on one row, as before.
+- To do: update the plugin and `/reload-plugins`. Nothing to configure.
+
 ## 0.5.0 (2026-10-12)
 
 - **Richer status line.** It now shows the model (with effort level), the folder you're in (with the subfolder, when it differs from where Claude Code was launched), the git branch (read from `.git`, no extra process), the open PR's review state, the context window used (`fill`), and your 5-hour and 7-day limit usage. Limits turn yellow at 80% and red at 95%.

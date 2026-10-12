@@ -222,7 +222,7 @@ const costPart = (cost) => (typeof cost?.total_cost_usd === 'number' && cost.tot
  * The segment: the parts named by the `statuslineSegments` setting, in that order.
  * A part with no data (no open PR, no limit data yet, no git repo) is left out.
  */
-export function buildSegment(data, now = Date.now()) {
+export function buildSegmentParts(data, now = Date.now()) {
   const cw = data.context_window || {};
   const session = data.session_id ? loadSession(data.session_id) : null;
   const resolved = resolveSettings(session ? { session } : {});
@@ -260,7 +260,11 @@ export function buildSegment(data, now = Date.now()) {
     const text = parts[name]?.();
     if (text) out.push(text);
   }
-  return out.join(SEP);
+  return out;
+}
+
+export function buildSegment(data, now = Date.now()) {
+  return buildSegmentParts(data, now).join(SEP);
 }
 
 function readStdin() {
@@ -269,6 +273,65 @@ function readStdin() {
   } catch {
     return '';
   }
+}
+
+/** Visible width of a string: escape codes take no columns. */
+export const visibleWidth = (s) => String(s).replace(/\x1b\[[0-9;]*m/g, '').length;
+
+/**
+ * Pack the parts into rows no wider than `width` columns, joined by `sep`. A part is
+ * never split. `prefixWidth` is the width already used on the first line by text printed
+ * before the segment; `first` is what continues that line (empty when nothing fits there).
+ * With width Infinity everything stays on one line.
+ */
+export function wrapParts(parts, sep, width, prefixWidth = 0) {
+  const sepLen = visibleWidth(sep);
+  const rows = [];
+  let first = '';
+  let line = '';
+  let lineWidth = prefixWidth;
+  let onPrefix = prefixWidth > 0;
+  let hasItems = prefixWidth > 0;
+  for (const part of parts) {
+    const len = visibleWidth(part);
+    const need = len + (hasItems ? sepLen : 0);
+    if (hasItems && lineWidth + need <= width) {
+      line += (line === '' ? '' : sep) + part; // the first part on their line gets its separator from renderLine
+      lineWidth += need;
+      continue;
+    }
+    // the current line is full: close it and start the next one with this part
+    if (onPrefix) first = line;
+    else if (hasItems) rows.push(line);
+    onPrefix = false;
+    line = part;
+    lineWidth = len;
+    hasItems = true;
+  }
+  if (onPrefix) first = line;
+  else if (hasItems) rows.push(line);
+  return { first, rows };
+}
+
+/** Columns the status line may use: Claude Code sets COLUMNS to the terminal width; keep 2 spare. */
+export function columnsWidth(env = process.env) {
+  const cols = Number(env.COLUMNS);
+  return cols > 0 ? Math.max(20, cols - 2) : Infinity;
+}
+
+/** The whole status line: the wrapped command's output, then our parts wrapped to the terminal width. */
+export function renderLine({ theirs, placement, parts, width }) {
+  if (!theirs) {
+    const { first, rows } = wrapParts(parts, SEP, width, 0);
+    return [first, ...rows].filter(Boolean).join('\n');
+  }
+  if (placement === 'newline') {
+    const { rows } = wrapParts(parts, SEP, width, 0);
+    return [theirs, ...rows].join('\n');
+  }
+  // append: our first part continues the last line of their output, if it fits there
+  const { first, rows } = wrapParts(parts, SEP, width, visibleWidth(theirs.split('\n').pop()));
+  return [first ? theirs + SEP + first : theirs, ...rows].join('\n');
 }
 
 /** `install` is { wrapped, placement } for the settings file this status line was installed into. */
@@ -281,17 +344,14 @@ export async function main(install = {}) {
     // still run the wrapped status line
   }
   const theirsP = wrappedOutput(install, input, data).catch(() => '');
-  let segment = '';
+  let parts = [];
   try {
-    segment = buildSegment(data);
+    parts = buildSegmentParts(data);
   } catch {
     // keep the user's own status line intact whatever happens to ours
   }
   const theirs = await theirsP;
-  let out;
-  if (!theirs) out = segment;
-  else if (!segment) out = theirs;
-  else out = theirs + (install.placement === 'newline' ? '\n' : `${C.dim} │ ${C.reset}`) + segment;
+  const out = renderLine({ theirs, placement: install.placement, parts, width: columnsWidth() });
   process.stdout.write((out || 'cache-warm') + '\n');
 }
 
