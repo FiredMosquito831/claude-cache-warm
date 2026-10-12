@@ -108,7 +108,7 @@ Every release gets a `CHANGELOG.md` entry (newest first). It says what changed f
 2. Docs match the code: README, `docs/TUTORIAL.md`, and `docs/CONTRACT.md` for any state-file or API change. Skills (`skills/*/SKILL.md`) must not describe removed behaviour; a stale skill once told Claude to create cron jobs.
 3. Bump the version in the three places, and add the CHANGELOG entry.
 4. Commit: a subject line, then a body that explains root causes rather than just listing files, then a blank line and `by FiredMosquito831`. Use the git identity already configured; never pass `-c user.name/-c user.email` (that once had to be undone with `--amend --reset-author`).
-5. Push to `origin/main` once the user wants it shipped. Then tell them: `/plugin` → update, then `/reload-plugins` in every open session, then `ccw doctor` and `/cache-warm:test` (in the CLI *and* the Desktop app).
+5. Ship through a feature branch and a pull request, never by pushing straight to `main`: a fresh `git worktree add` from `origin/main` on a new branch, push the branch, `gh pr create`, then `gh pr merge --squash --delete-branch` once the user says to merge. Then remove the worktree. Then tell them: `/plugin` → update, then `/reload-plugins` in every open session, then `ccw doctor` and `/cache-warm:test` (in the CLI *and* the Desktop app).
 
 **How updates reach users (learned the hard way):**
 - Nothing changes until the user updates. Each running session keeps the hooks it loaded until `/reload-plugins` or a restart.

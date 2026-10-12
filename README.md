@@ -76,6 +76,7 @@ Keep-alive turns, scheduled-task prompts and background-task reports don't count
 | `maxIdleMinutes` | `180` | Stop after this long with no activity. 0 = never |
 | `minContextTokens` | `20000` | Small contexts are cheap to rebuild; skip them |
 | `dashboardPort` | `4777` | Global only |
+| `statuslineSegments` | `model,folder,branch,pr,warm,context,cache,fill,limits` | Global only. Parts of the status line, in order. Available: model, folder, branch, pr, warm, context, cache, fill, limits, cost |
 | `statusline` | `auto` | Global only. `auto`: keep the segment on your status line, creating one if you have none. `wrap-only`: only on existing ones. `off`: restore the originals |
 
 Each session resolves every setting from the most specific scope that sets it:
@@ -114,6 +115,8 @@ The plugin tab (`/plugin` → cache-warm → configure) sets the global layer pl
 Scope words for the slash commands: `session`, `project`, `desktop`, `cli`, `ide`.
 
 ## Status line
+
+Parts, in the order you choose (`ccw set statuslineSegments model,folder,branch,warm,context,cache,fill,limits`, also in the plugin tab and the dashboard): `model` (with effort), `folder` (with the subfolder you're in), `branch`, `pr` (review state), `warm`, `context`, `cache`, `fill` (context window used), `limits` (5-hour and 7-day usage, subscriptions), `cost` (list-price estimate, off by default). Parts without data are left out.
 
 On by default (`statusline: auto`). At every session start the plugin makes sure the segment sits on the status line that session will show, and nothing else:
 

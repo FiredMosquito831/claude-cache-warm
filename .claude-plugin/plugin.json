@@ -1,7 +1,7 @@
 {
   "name": "cache-warm",
   "displayName": "Cache Warm",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Keeps the prompt cache of idle Claude Code sessions warm. Works the same in the CLI, IDE and Desktop app; per-session, per-project, per-surface and global settings.",
   "author": {
     "name": "FiredMosquito831",
@@ -84,6 +84,12 @@
         "wrap-only",
         "off"
       ]
+    },
+    "statusline_segments": {
+      "type": "string",
+      "title": "Status line parts",
+      "description": "Comma-separated, in order. Available: model, folder, branch, pr, warm, context, cache, fill, limits, cost. cost is a list-price estimate, so it is off by default.",
+      "default": "model,folder,branch,pr,warm,context,cache,fill,limits"
     }
   }
 }
