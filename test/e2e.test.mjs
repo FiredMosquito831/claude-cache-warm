@@ -268,7 +268,8 @@ test('waker: a new prompt makes the sleeping timer stand down (timer restarts on
 
 test('waker: idle cap, ping cap and an already-expired cache all end the timer without pinging', async () => {
   ccw('set', 'maxIdleMinutes', '70');
-  let r = await runWaker('cli-1', { background: RUNNING_AGENT, whileSleeping: () => age('cli-1', 51, { human: 80 }) });
+  ccw('when', 'always'); // the idle cap is about a session with nothing running; 'always' warms it while idle
+  let r = await runWaker('cli-1', { background: [], whileSleeping: () => age('cli-1', 51, { human: 80 }) });
   assert.equal(r.code, 0);
   assert.equal(readJson(stateFile('cli-1')).waker.exitReason, 'idle-cap');
 
@@ -285,7 +286,7 @@ test('waker: idle cap, ping cap and an already-expired cache all end the timer w
   ccw('set', 'maxIdleMinutes', '10');
   ccw('interval', '4', '--session=cli-1');
   r = await runWaker('cli-1', {
-    background: RUNNING_AGENT,
+    background: [],
     whileSleeping: () => {
       age('cli-1', 5, { human: 6 });
       const now = Date.now();
@@ -547,4 +548,30 @@ test('status line wraps to the terminal width: whole parts, prefix line, one row
   assert.equal(renderLine({ theirs: 'THEIRS', placement: 'newline', parts, width: Infinity }).replace(/\x1b\[[0-9;]*m/g, ''), 'THEIRS\none │ two │ three');
   assert.equal(sl.columnsWidth({ COLUMNS: '' }), Infinity, 'no COLUMNS: one row, as before');
   assert.equal(sl.columnsWidth({ COLUMNS: '100' }), 98);
+});
+
+test('background work keeps warming past the idle cap; a stale snapshot is no longer trusted', async () => {
+  ccw('set', 'maxIdleMinutes', '70');
+  ccw('when', 'background-work');
+  // earlier tests left pings and a suspension behind; start this one clean
+  lib.updateState('cli-1', (st) => ({ ...st, pingTimes: [], pingsTotal: 0, suspended: null, consecutiveMisses: 0 }));
+  // nobody has typed for 5 hours, but an agent is running: the last ping was 55 minutes ago, so it is due and sent
+  let r = await runWaker('cli-1', { background: RUNNING_AGENT, whileSleeping: () => age('cli-1', 55, { human: 300 }) });
+  assert.equal(r.code, 2, 'running background work is not idle');
+  assert.match(r.stderr, /^\[cache-warm\] Keep-alive ping/);
+
+  // the same, but the snapshot that says "running" is 13 hours old: not trusted any more, so the session is idle
+  const stale = () => {
+    age('cli-1', 55, { human: 300 });
+    lib.updateSession('cli-1', (s) => ({ ...s, background: { ...s.background, at: Date.now() - 13 * 3600_000 } }));
+  };
+  r = await runWaker('cli-1', { background: RUNNING_AGENT, whileSleeping: stale });
+  assert.equal(r.code, 0);
+  assert.equal(status('cli-1').status, 'no-work', 'an old snapshot no longer counts as running work');
+
+  // with no idle cap at all, a stale snapshot must not keep pinging forever either
+  ccw('set', 'maxIdleMinutes', '0');
+  r = await runWaker('cli-1', { background: RUNNING_AGENT, whileSleeping: stale });
+  assert.equal(r.code, 0, 'no ping');
+  ccw('set', 'maxIdleMinutes', '0');
 });

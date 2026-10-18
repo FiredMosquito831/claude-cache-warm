@@ -155,7 +155,7 @@ Plugin-tab edits apply right away (through Claude Code's `ConfigChange` hook); t
 
 **Get the 1-hour TTL first.** It turns 15 pings an hour into 1. A Claude subscription gets it automatically inside plan limits. With an API key, or to keep it on usage credits, add `"promptCacheTtl": "1h"` to your Claude Code settings.
 
-**Idle cap.** "Idle" means nobody typed and no real work happened: pings, scheduled-task prompts and background reports don't reset it. Pings stop paying for themselves once they cost more than one rebuild: about 19 pings (~16 h) on a 1h cache, about 11 (~45 min) on a 5m cache, roughly 4x later on Fable 5.1. On top of the idle cap there's a hard limit of `ceil(idle cap / interval) + 1` pings per idle stretch (24 when the cap is 0).
+**Idle cap.** "Idle" means nobody typed and no real work happened: pings, scheduled-task prompts and background reports don't reset it. While an agent, a background task or a shell is running, the session isn't idle: the idle cap doesn't apply, and that work is trusted for at most 12 hours after the turn that reported it. Pings stop paying for themselves once they cost more than one rebuild: about 19 pings (~16 h) on a 1h cache, about 11 (~45 min) on a 5m cache, roughly 4x later on Fable 5.1. On top of the idle cap there's a hard limit of `ceil(idle cap / interval) + 1` pings per idle stretch (24 when the cap is 0).
 
 ## 8. The dashboard
 

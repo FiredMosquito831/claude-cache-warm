@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-export const VERSION = '0.5.1';
+export const VERSION = '0.5.2';
 
 export const HOME = process.env.CCW_HOME || path.join(os.homedir(), '.claude-cache-warm');
 export const CONFIG_PATH = path.join(HOME, 'config.json');
@@ -773,6 +773,13 @@ export function resolveIntervalMinutes(settings, ttl) {
 const MAX_PINGS_PER_IDLE = 24;
 
 /**
+ * Background work (agents, background tasks, shells) reported by the last Stop is trusted for this long.
+ * Its completion notice normally refreshes the list well before that; the limit only stops a lost
+ * notice from keeping warming on forever.
+ */
+export const WORK_TRUST_MS = 12 * 3600_000;
+
+/**
  * Single source of truth for "should this session be pinged, and when".
  * The waker acts on it; the CLI, status line and dashboard only display it.
  */
@@ -787,6 +794,8 @@ export function computeStatus({ settings, session, state, usage, now = Date.now(
   // Any request of the main conversation refreshes its cache, pings included.
   const lastRequestAt = Math.max(session.lastPromptAt || 0, session.lastStopAt || 0, lastPingAt, usage?.timestamp || 0);
   const work = pendingWork(session);
+  // Work that is running is not idle: the idle cap and the idle ping cap don't apply to it.
+  const working = work.count > 0 && now - (session.background?.at || 0) < WORK_TRUST_MS;
   const pingsSinceActivity = pingTimes.filter((t) => t > lastHumanAt).length;
   const pingCap = settings.maxIdleMinutes > 0 ? Math.min(MAX_PINGS_PER_IDLE, Math.ceil(settings.maxIdleMinutes / intervalMinutes) + 1) : MAX_PINGS_PER_IDLE;
   const turnActive = (session.turnStartedAt || 0) > (session.lastStopAt || 0) && now - session.turnStartedAt < 6 * 3600_000;
@@ -812,10 +821,10 @@ export function computeStatus({ settings, session, state, usage, now = Date.now(
   if (session.endedAt) status = 'ended';
   else if (!settings.enabled) status = 'off';
   else if (turnActive) status = 'busy'; // the conversation is refreshing its own cache
-  else if (settings.warmWhen === 'background-work' && work.count === 0) status = 'no-work';
+  else if (settings.warmWhen === 'background-work' && !working) status = 'no-work';
   else if (base.contextTokens < settings.minContextTokens) status = 'small-context';
-  else if (settings.maxIdleMinutes > 0 && now - lastHumanAt > settings.maxIdleMinutes * 60_000) status = 'idle-cap';
-  else if (pingsSinceActivity >= pingCap) status = 'ping-cap';
+  else if (!working && settings.maxIdleMinutes > 0 && now - lastHumanAt > settings.maxIdleMinutes * 60_000) status = 'idle-cap';
+  else if (pingsSinceActivity >= (working ? MAX_PINGS_PER_IDLE : pingCap)) status = 'ping-cap';
   else if (state?.suspended && state.suspended.at >= lastHumanAt) status = 'suspended'; // pings were missing the cache
   else if (now - lastRequestAt > TTL_MINUTES[ttl] * 60_000) status = 'expired'; // a ping now would be the expensive rewrite
   else status = 'warming';
