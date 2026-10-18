@@ -2,6 +2,12 @@
 
 Newest first. Each entry: what changed for you, why, and what you need to do.
 
+## 0.5.2 (2026-10-18)
+
+- **Background agents keep warm.** The idle cap and the idle ping cap no longer stop warming while a subagent, a background task or a background shell is running. The idle clock starts only once nothing is running. Before, an agent in the background that ran longer than the idle cap lost its warming while it was still running: the status line showed `warm paused (idle cap) (1 bg job)` and the cache went cold.
+- Background work is trusted for 12 hours after the turn that reported it, so a completion notice that never arrives can't keep warming on forever.
+- To do: update the plugin and `/reload-plugins`. Nothing to configure.
+
 ## 0.5.1 (2026-10-12)
 
 - **The status line wraps.** Claude Code gives a status line one row, and a long line got cut off on narrow terminals. The parts now wrap onto the next row at part boundaries, to the terminal width (Claude Code sets `COLUMNS`). A part is never split. Without `COLUMNS` the line stays on one row, as before.

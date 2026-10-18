@@ -1,7 +1,7 @@
 {
   "name": "cache-warm",
   "displayName": "Cache Warm",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Keeps the prompt cache of idle Claude Code sessions warm. Works the same in the CLI, IDE and Desktop app; per-session, per-project, per-surface and global settings.",
   "author": {
     "name": "FiredMosquito831",
