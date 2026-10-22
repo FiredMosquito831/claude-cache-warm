@@ -1,0 +1,524 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Configuration reference — Cache Warm</title>
+<meta name="description" content="Every Cache Warm setting, default, validation rule and scope: warmWhen, intervalMinutes, maxIdleMinutes, minContextTokens, dashboardPort, statusline and statuslineSegments.">
+<meta name="keywords" content="Cache Warm configuration, warmWhen, intervalMinutes, maxIdleMinutes, minContextTokens, statuslineSegments, ccw reference, Claude Code plugin settings">
+<meta name="author" content="FiredMosquito831">
+<meta name="robots" content="index,follow">
+<link rel="canonical" href="https://cachewarm.danubelabs.net/reference/">
+<meta name="theme-color" content="#f6efe2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#17120e" media="(prefers-color-scheme: dark)">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Cache Warm">
+<meta property="og:title" content="Configuration reference — Cache Warm">
+<meta property="og:description" content="Every Cache Warm setting, default, validation rule and scope: warmWhen, intervalMinutes, maxIdleMinutes, minContextTokens, dashboardPort, statusline and statuslineSegments.">
+<meta property="og:url" content="https://cachewarm.danubelabs.net/reference/">
+<meta property="og:image" content="https://cachewarm.danubelabs.net/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Cache Warm — prompt-cache keep-alive for Claude Code">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Configuration reference — Cache Warm">
+<meta name="twitter:description" content="Every Cache Warm setting, default, validation rule and scope: warmWhen, intervalMinutes, maxIdleMinutes, minContextTokens, dashboardPort, statusline and statuslineSegments.">
+<meta name="twitter:image" content="https://cachewarm.danubelabs.net/og.png">
+<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/assets/favicon.svg">
+<link rel="preload" href="/assets/fonts/fraunces-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/assets/fonts/inter-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/assets/css/style.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Cache Warm",
+  "alternateName": "claude-cache-warm",
+  "applicationCategory": "DeveloperApplication",
+  "applicationSubCategory": "Claude Code plugin",
+  "operatingSystem": "Windows, macOS, Linux",
+  "softwareVersion": "0.5.2",
+  "softwareRequirements": "Node.js 18+ and a Claude Code version that supports asyncRewake hooks",
+  "description": "Keep-alive pings for idle Claude Code sessions. Scoped settings, a status line segment, a local dashboard and a self-checking waker. Node 18+, zero runtime dependencies.",
+  "url": "https://cachewarm.danubelabs.net/",
+  "codeRepository": "https://github.com/FiredMosquito831/claude-cache-warm",
+  "downloadUrl": "https://github.com/FiredMosquito831/claude-cache-warm",
+  "license": "https://opensource.org/licenses/MIT",
+  "isAccessibleForFree": true,
+  "author": {
+    "@type": "Person",
+    "name": "FiredMosquito831",
+    "url": "https://github.com/FiredMosquito831"
+  },
+  "offers": {
+    "@type": "Offer",
+    "price": "0",
+    "priceCurrency": "USD"
+  },
+  "keywords": "Claude Code plugin, prompt cache, cache warm, keep-alive, prompt caching, Claude Code cost, cache TTL, status line, ccw",
+  "featureList": [
+    "Keep-alive pings for idle Claude Code sessions",
+    "Session, project, surface and global scopes",
+    "Status line segment that wraps an existing line",
+    "Local dashboard with transcript analytics",
+    "Verified pings with automatic suspension after misses"
+  ]
+}
+</script>
+</head>
+<body class="page-reference">
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site-head" data-head>
+  <div class="shell head-inner">
+    <a class="brand" href="/" aria-label="Cache Warm home">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 32 32" fill="none"><path d="M16 4.5c2.4 3.6 7.5 7.4 7.5 13.1A7.5 7.5 0 0 1 16 25a7.5 7.5 0 0 1-7.5-7.4C8.5 11.9 13.6 8.1 16 4.5Z" stroke="currentColor" stroke-width="1.7"/><path d="M16 12c1.2 1.9 3.2 3.4 3.2 6a3.2 3.2 0 1 1-6.4 0c0-2.6 2-4.1 3.2-6Z" fill="currentColor"/></svg>
+      </span>
+      <span class="brand-word">Cache<em>Warm</em></span>
+      <span class="brand-ver">v0.5.2</span>
+    </a>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="nav" data-nav-toggle>
+      <span class="sr-only">Menu</span><span></span><span></span>
+    </button>
+    <nav class="nav" id="nav" aria-label="Primary">
+      <a href="/" >Overview</a>
+      <a href="/reference/" aria-current="page">Reference</a>
+      <a href="/dashboard/" >Dashboard</a>
+      <a href="/faq/" >FAQ</a>
+      <a href="/security/" >Security</a>
+      <a class="nav-gh" href="https://github.com/FiredMosquito831/claude-cache-warm" rel="noopener">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+        GitHub
+      </a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+<header class="page-head">
+  <div class="shell">
+    <p class="eyebrow"><span class="eyebrow-dot"></span>Reference <span class="sep">/</span> schema 2</p>
+    <h1>Every setting, scope, and state.</h1>
+    <p class="lede">The configuration surface of Cache Warm v0.5.2, generated from <code>scripts/lib.mjs</code> and the plugin manifest. Defaults below are the values the code ships with.</p>
+    <div class="page-meta">
+      <span>Plugin <b>v0.5.2</b></span>
+      <span>Config <b>schema 2</b></span>
+      <span>Source <b>scripts/lib.mjs</b></span>
+    </div>
+  </div>
+</header>
+
+<div class="shell doc-layout">
+  <aside class="doc-toc" aria-label="On this page">
+    <p class="toc-title">On this page</p>
+    <nav>
+      <a href="#resolution">Resolution order</a>
+      <a href="#settings">Settings</a>
+      <a href="#plugin-tab">Plugin tab</a>
+      <a href="#statusline">Status line parts</a>
+      <a href="#statuses">Session statuses</a>
+      <a href="#commands">Commands</a>
+      <a href="#scopes">Scopes in practice</a>
+      <a href="#cost">Cost model</a>
+      <a href="#limits">Limits</a>
+    </nav>
+    <a class="toc-gh" href="https://github.com/FiredMosquito831/claude-cache-warm/blob/main/docs/CONTRACT.md" rel="noopener">State-file contract ↗</a>
+  </aside>
+
+  <div class="doc-body">
+    <section class="doc-section" id="resolution">
+      <p class="eyebrow"><span class="num">01</span> Resolution</p>
+      <h2>Most specific scope wins.</h2>
+      <p>Each session resolves every setting from the first scope that defines it. Values that are unset simply inherit. Two scopes can never accidentally change each other's surfaces: inside a Claude Code session, an unscoped <code>ccw</code> change applies to that session's surface only.</p>
+      <div class="resolution">
+        <span class="res-node res-1">session<small>overrides</small></span>
+        <i>›</i>
+        <span class="res-node res-2">project folder<small>folder and below</small></span>
+        <i>›</i>
+        <span class="res-node res-3">surface<small>cli · desktop · ide</small></span>
+        <i>›</i>
+        <span class="res-node res-4">global<small>machine</small></span>
+        <i>›</i>
+        <span class="res-node res-5">plugin tab<small>options</small></span>
+        <i>›</i>
+        <span class="res-node res-6">defaults<small>in code</small></span>
+      </div>
+      <div class="code-block">
+        <pre><code># what this session actually uses, and where each value comes from
+ccw config --session
+
+# the same, for one scope
+ccw config --desktop
+ccw config --project
+
+# every scope that currently holds a setting
+ccw scopes</code></pre>
+      </div>
+      <div class="callout">
+        <b>Surfaces come from the environment.</b>
+        <p><code>CLAUDE_CODE_ENTRYPOINT</code> maps to <code>cli</code>; anything containing <code>desktop</code> to <code>desktop</code>; VS Code, JetBrains, Cursor and Windsurf entrypoints to <code>ide</code>. <code>sdk-*</code> runs — <code>claude -p</code> and the Agent SDK — are <code>headless</code> and are never registered or warmed.</p>
+      </div>
+    </section>
+
+    <section class="doc-section" id="settings">
+      <p class="eyebrow"><span class="num">02</span> Settings</p>
+      <h2>8 settings, validated before they are written.</h2>
+      <p>The first five are scoped. The rest make sense once per machine and can only be set at the global scope. Values are stored as JSON in <code>~/.claude-cache-warm/config.json</code>; only explicitly set values are persisted.</p>
+
+      <div class="option-list">
+        <article class="option" id="opt-enabled">
+          <div class="option-head">
+            <code class="option-key">enabled</code>
+            <span class="option-badge">scoped</span>
+          </div>
+          <h3>Warming on</h3>
+          <p>Global master switch. Per-surface, per-project and per-session settings can override it (ccw or the dashboard).</p>
+          <dl class="option-meta">
+            <div><dt>Default</dt><dd><code>On</code></dd></div>
+            <div><dt>Accepted</dt><dd>boolean (the CLI also accepts <code>true</code> / <code>false</code>)</dd></div>
+            <div><dt>Set with</dt><dd><code>ccw on / ccw off</code></dd></div>
+          </dl>
+        </article>
+        <article class="option" id="opt-warmWhen">
+          <div class="option-head">
+            <code class="option-key">warmWhen</code>
+            <span class="option-badge">scoped</span>
+          </div>
+          <h3>Warm a session</h3>
+          <p>background-work: only while a subagent, background task or scheduled task is pending (recommended). always: any idle session.</p>
+          <dl class="option-meta">
+            <div><dt>Default</dt><dd><code>background-work</code></dd></div>
+            <div><dt>Accepted</dt><dd><code>background-work</code> or <code>always</code></dd></div>
+            <div><dt>Set with</dt><dd><code>ccw when background-work</code></dd></div>
+          </dl>
+        </article>
+        <article class="option" id="opt-intervalMinutes">
+          <div class="option-head">
+            <code class="option-key">intervalMinutes</code>
+            <span class="option-badge">scoped</span>
+          </div>
+          <h3>Ping interval (minutes)</h3>
+          <p>Counted from the conversation&#39;s last request. auto = 50 on a 1-hour cache, 4 on a 5-minute cache. Otherwise 1 to 59, shorter than the cache TTL.</p>
+          <dl class="option-meta">
+            <div><dt>Default</dt><dd><code>auto — 50 min on a 1h cache, 4 min on a 5m cache</code></dd></div>
+            <div><dt>Accepted</dt><dd><code>auto</code>, or an integer from 1 to 59</dd></div>
+            <div><dt>Set with</dt><dd><code>ccw interval 30</code></dd></div>
+          </dl>
+        </article>
+        <article class="option" id="opt-maxIdleMinutes">
+          <div class="option-head">
+            <code class="option-key">maxIdleMinutes</code>
+            <span class="option-badge">scoped</span>
+          </div>
+          <h3>Stop after idle (minutes)</h3>
+          <p>Stop pinging once nobody has typed and no real work has happened for this long. 0 = never stop.</p>
+          <dl class="option-meta">
+            <div><dt>Default</dt><dd><code>180 min (0 = never)</code></dd></div>
+            <div><dt>Accepted</dt><dd>number ≥ 0; <code>0</code> = never stop</dd></div>
+            <div><dt>Set with</dt><dd><code>ccw set maxIdleMinutes 180</code></dd></div>
+          </dl>
+        </article>
+        <article class="option" id="opt-minContextTokens">
+          <div class="option-head">
+            <code class="option-key">minContextTokens</code>
+            <span class="option-badge">scoped</span>
+          </div>
+          <h3>Skip sessions below (tokens)</h3>
+          <p>Small contexts are cheap to rebuild; do not warm them.</p>
+          <dl class="option-meta">
+            <div><dt>Default</dt><dd><code>20,000</code></dd></div>
+            <div><dt>Accepted</dt><dd>number ≥ 0</dd></div>
+            <div><dt>Set with</dt><dd><code>ccw set minContextTokens 20000</code></dd></div>
+          </dl>
+        </article>
+        <article class="option" id="opt-dashboardPort">
+          <div class="option-head">
+            <code class="option-key">dashboardPort</code>
+            <span class="option-badge">global only</span>
+          </div>
+          <h3>Dashboard port</h3>
+          <p>Local port for ccw dashboard.</p>
+          <dl class="option-meta">
+            <div><dt>Default</dt><dd><code>4777</code></dd></div>
+            <div><dt>Accepted</dt><dd>integer from 1024 to 65535</dd></div>
+            <div><dt>Set with</dt><dd><code>ccw set dashboardPort 4777</code></dd></div>
+          </dl>
+        </article>
+        <article class="option" id="opt-statusline">
+          <div class="option-head">
+            <code class="option-key">statusline</code>
+            <span class="option-badge">global only</span>
+          </div>
+          <h3>Status line segment</h3>
+          <p>auto: add the cache segment to your status line (creating one if you have none). wrap-only: only add it to an existing status line. off: remove it and restore your original status line exactly.</p>
+          <dl class="option-meta">
+            <div><dt>Default</dt><dd><code>auto</code></dd></div>
+            <div><dt>Accepted</dt><dd><code>auto</code>, <code>wrap-only</code> or <code>off</code></dd></div>
+            <div><dt>Set with</dt><dd><code>ccw statusline auto</code></dd></div>
+          </dl>
+        </article>
+        <article class="option" id="opt-statuslineSegments">
+          <div class="option-head">
+            <code class="option-key">statuslineSegments</code>
+            <span class="option-badge">global only</span>
+          </div>
+          <h3>Status line parts</h3>
+          <p>Comma-separated, in order. Available: model, folder, branch, pr, warm, context, cache, fill, limits, cost. cost is a list-price estimate, so it is off by default.</p>
+          <dl class="option-meta">
+            <div><dt>Default</dt><dd><code>model, folder, branch, pr, warm, context, cache, fill, limits</code></dd></div>
+            <div><dt>Accepted</dt><dd>comma-separated parts, each one of the available segments</dd></div>
+            <div><dt>Set with</dt><dd><code>ccw set statuslineSegments model,folder,warm</code></dd></div>
+          </dl>
+        </article>
+      </div>
+    </section>
+
+    <section class="doc-section" id="plugin-tab">
+      <p class="eyebrow"><span class="num">03</span> Plugin tab</p>
+      <h2>Those options in <code>/plugin</code> are a real scope.</h2>
+      <p>Claude Code passes plugin-tab values to hooks as <code>CLAUDE_PLUGIN_OPTION_*</code>. The SessionStart hook snapshots them, so the CLI, status line and dashboard can see them too. Editing a value in the tab makes it win over the override it would otherwise sit behind; untouched tab values never undo edits made with <code>ccw</code> or the dashboard. Edits apply immediately through the <code>ConfigChange</code> hook, and sleeping timers pick them up within a minute.</p>
+      <p>The tab exposes one extra convenience option that is not a stored setting:</p>
+      <div class="option-list compact">
+        <article class="option" id="opt-desktopMode">
+          <div class="option-head"><code class="option-key">desktopMode</code><span class="option-badge subtle">plugin tab only</span></div>
+          <h3>Desktop app sessions</h3>
+          <p>same-as-cli: follow the settings above. off / background-work / always: override them for sessions in the Claude desktop app only.</p>
+          <dl class="option-meta">
+            <div><dt>Default</dt><dd><code>same-as-cli</code></dd></div>
+            <div><dt>Accepted</dt><dd><code>same-as-cli</code>, <code>off</code>, <code>background-work</code> or <code>always</code></dd></div>
+          </dl>
+        </article>
+      </div>
+    </section>
+
+    <section class="doc-section" id="statusline">
+      <p class="eyebrow"><span class="num">04</span> Status line</p>
+      <h2>10 parts, in the order you choose.</h2>
+      <p>Configure with <code>ccw set statuslineSegments model,folder,warm</code>, the plugin tab, or the dashboard's Global tab. Parts without data are omitted. Long lines wrap onto the next row at part boundaries. The segment wraps your existing status line — it never replaces it.</p>
+      <div class="segment-grid">
+        <div class="segment default">
+          <code>model</code>
+          <p>Model name, with the effort level when Claude Code reports it.</p>
+<span class="seg-mark">on by default</span>        </div>
+        <div class="segment default">
+          <code>folder</code>
+          <p>Project folder, plus the subfolder you are in when it differs.</p>
+<span class="seg-mark">on by default</span>        </div>
+        <div class="segment default">
+          <code>branch</code>
+          <p>Current git branch, read from .git without spawning a process.</p>
+<span class="seg-mark">on by default</span>        </div>
+        <div class="segment default">
+          <code>pr</code>
+          <p>Open pull request number and review state.</p>
+<span class="seg-mark">on by default</span>        </div>
+        <div class="segment default">
+          <code>warm</code>
+          <p>Warming state, next-ping countdown and pending background jobs.</p>
+<span class="seg-mark">on by default</span>        </div>
+        <div class="segment default">
+          <code>context</code>
+          <p>Tokens currently in the context window.</p>
+<span class="seg-mark">on by default</span>        </div>
+        <div class="segment default">
+          <code>cache</code>
+          <p>Tokens the last request read from the cache, and the percentage.</p>
+<span class="seg-mark">on by default</span>        </div>
+        <div class="segment default">
+          <code>fill</code>
+          <p>Context-window usage as an amount and a percentage.</p>
+<span class="seg-mark">on by default</span>        </div>
+        <div class="segment default">
+          <code>limits</code>
+          <p>5-hour and 7-day subscription usage, when available.</p>
+<span class="seg-mark">on by default</span>        </div>
+        <div class="segment ">
+          <code>cost</code>
+          <p>List-price cost estimate. Opt-in: misleading on a subscription.</p>
+<span class="seg-mark off">opt-in</span>        </div>
+      </div>
+      <div class="code-block">
+        <pre><code># default order
+ccw set statuslineSegments model,folder,branch,pr,warm,context,cache,fill,limits
+
+# the segment itself: auto (default), wrap-only, off
+ccw statusline auto
+ccw statusline wrap-only
+ccw statusline off        # restores every original exactly</code></pre>
+      </div>
+    </section>
+
+    <section class="doc-section" id="statuses">
+      <p class="eyebrow"><span class="num">05</span> States</p>
+      <h2>What the waker decided, and why.</h2>
+      <p>One function — <code>computeStatus()</code> — is the single source of truth. The waker acts on it; the CLI, status line and dashboard only display it. These are the states the code can return.</p>
+      <div class="status-table">
+        <div class="status-row">
+          <span class="status-name"><i class="st-dot warming"></i><code>warming</code></span>
+          <p>Eligible and waiting; nextPingAt is set and the waker will exit 2 when it is due.</p>
+        </div>
+        <div class="status-row">
+          <span class="status-name"><i class="st-dot busy"></i><code>busy</code></span>
+          <p>A turn is in progress, so the conversation is refreshing its own cache. Nothing fires mid-turn.</p>
+        </div>
+        <div class="status-row">
+          <span class="status-name"><i class="st-dot no-work"></i><code>no-work</code></span>
+          <p>The default background-work policy is on and nothing is pending in the background.</p>
+        </div>
+        <div class="status-row">
+          <span class="status-name"><i class="st-dot off"></i><code>off</code></span>
+          <p>Warming is switched off at some scope that applies to this session.</p>
+        </div>
+        <div class="status-row">
+          <span class="status-name"><i class="st-dot small-context"></i><code>small-context</code></span>
+          <p>The context is below minContextTokens; rebuilding it is cheap.</p>
+        </div>
+        <div class="status-row">
+          <span class="status-name"><i class="st-dot idle-cap"></i><code>idle-cap</code></span>
+          <p>Nobody has been active for longer than maxIdleMinutes, and no background work is running.</p>
+        </div>
+        <div class="status-row">
+          <span class="status-name"><i class="st-dot ping-cap"></i><code>ping-cap</code></span>
+          <p>The session already used its pings for this idle stretch (ceil(idle cap / interval) + 1, hard cap 24).</p>
+        </div>
+        <div class="status-row">
+          <span class="status-name"><i class="st-dot suspended"></i><code>suspended</code></span>
+          <p>The last two verifiable pings missed the cache. Warming resumes when someone is active again.</p>
+        </div>
+        <div class="status-row">
+          <span class="status-name"><i class="st-dot expired"></i><code>expired</code></span>
+          <p>The cache TTL already elapsed. A ping now would be the expensive rewrite, so none is sent.</p>
+        </div>
+        <div class="status-row">
+          <span class="status-name"><i class="st-dot ended"></i><code>ended</code></span>
+          <p>The session ended or its process is gone.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="doc-section" id="commands">
+      <p class="eyebrow"><span class="num">06</span> Commands</p>
+      <h2>Slash commands and the <code>ccw</code> CLI.</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>In Claude Code</th><th>Shell</th><th>What it does</th></tr></thead>
+          <tbody>
+            <tr><td><code>/cache-warm:on [scope]</code></td><td><code>ccw on [scope]</code></td><td>Switch warming on.</td></tr>
+            <tr><td><code>/cache-warm:off [scope]</code></td><td><code>ccw off [scope]</code></td><td>Switch warming off.</td></tr>
+            <tr><td><code>/cache-warm:status</code></td><td><code>ccw status [--all] [--json]</code></td><td>Sessions, what each waits on, next-ping countdown, per-ping and cold-return estimates.</td></tr>
+            <tr><td><code>/cache-warm:config …</code></td><td><code>ccw config [scope]</code></td><td>Effective settings and the scope each value comes from.</td></tr>
+            <tr><td><code>/cache-warm:dashboard</code></td><td><code>ccw dashboard [--no-open]</code></td><td>Start the loopback dashboard and open it.</td></tr>
+            <tr><td><code>/cache-warm:statusline</code></td><td><code>ccw statusline install | auto | off</code></td><td>Install, configure or restore the status line segment.</td></tr>
+            <tr><td><code>/cache-warm:test</code></td><td><code>ccw test</code></td><td>Self-test this session: one verified ping a minute after the turn, settings restored.</td></tr>
+            <tr><td><code></code></td><td><code>ccw when &lt;background-work|always&gt; [scope]</code></td><td>Choose the warming policy.</td></tr>
+            <tr><td><code></code></td><td><code>ccw interval &lt;minutes|auto&gt; [scope]</code></td><td>Set the ping interval; auto follows the session&#39;s cache TTL.</td></tr>
+            <tr><td><code></code></td><td><code>ccw set &lt;key&gt; &lt;value&gt; [scope]</code></td><td>Set any scoped key; global-only keys always write to global.</td></tr>
+            <tr><td><code></code></td><td><code>ccw unset &lt;key&gt; [scope]</code></td><td>Drop one key at that scope so it inherits again.</td></tr>
+            <tr><td><code></code></td><td><code>ccw reset [scope]</code></td><td>Drop every setting at one scope.</td></tr>
+            <tr><td><code></code></td><td><code>ccw scopes</code></td><td>List every scope that currently holds settings.</td></tr>
+            <tr><td><code></code></td><td><code>ccw doctor</code></td><td>Health checks, including verified pings per surface.</td></tr>
+            <tr><td><code></code></td><td><code>ccw events [n]</code></td><td>The most recent entries from the local event log.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="table-note"><code>bin/ccw</code> is on the Bash tool's <code>PATH</code>. From a plain terminal, run <code>node scripts/ccw.mjs &lt;command&gt;</code>, or install the plugin's <code>bin</code> yourself.</p>
+    </section>
+
+    <section class="doc-section" id="scopes">
+      <p class="eyebrow"><span class="num">07</span> Scopes</p>
+      <h2>Change one session, one folder, one surface, or everything.</h2>
+      <div class="code-block">
+        <pre><code>ccw interval 30 --global              # every session
+ccw when always --desktop             # every Desktop-app session
+ccw off --cli                         # every CLI session
+ccw interval 20 --project             # this folder and everything below it
+ccw set maxIdleMinutes 600 --session  # just this session
+ccw config --session                  # effective values and their sources
+ccw reset --desktop                   # that scope inherits everything again
+ccw unset intervalMinutes --project   # drop one key at one scope</code></pre>
+      </div>
+      <div class="callout warn">
+        <b>An unscoped change is not global inside a session.</b>
+        <p>Run inside Claude Code, <code>ccw off</code> in the Desktop app turns off Desktop sessions, not your CLI ones. Changing every surface at once needs <code>--global</code>. From a plain terminal, unscoped means global.</p>
+      </div>
+      <h3 id="scope-words">Scope words for slash commands</h3>
+      <p><code>session</code>, <code>project</code>, <code>cli</code>, <code>desktop</code>, <code>ide</code> — for example <code>/cache-warm:off desktop</code> or <code>/cache-warm:on session</code>.</p>
+    </section>
+
+    <section class="doc-section" id="cost">
+      <p class="eyebrow"><span class="num">08</span> Cost</p>
+      <h2>One cache read versus one cache write.</h2>
+      <p>The plugin estimates each ping and each avoided rebuild from list prices in its own source. It is an estimate, not a bill — on a subscription the same tokens come out of usage limits.</p>
+      <div class="formula-grid">
+        <div class="formula">
+          <span>Ping</span>
+          <code>tokens × input price × cache-read multiplier</code>
+          <p>Cache reads are 0.1× base input price, except Fable and Mythos 5.1 at 0.025×.</p>
+        </div>
+        <div class="formula">
+          <span>Rebuild</span>
+          <code>tokens × input price × write multiplier</code>
+          <p>Cache writes are 1.25× for a 5-minute cache and 2× for a 1-hour cache.</p>
+        </div>
+      </div>
+      <p>For the worked example on the overview — 800K tokens on Opus 5 with a 1-hour cache — the estimator reports roughly <b>$0.40</b> per ping and <b>$8.00</b> per cold rebuild, a break-even of about <b>18</b> pings. With a 180-minute idle cap, warming cannot continue indefinitely; with <code>maxIdleMinutes</code> at <code>0</code> a hard cap of 24 pings per idle stretch still applies.</p>
+    </section>
+
+    <section class="doc-section" id="limits">
+      <p class="eyebrow"><span class="num">09</span> Limits</p>
+      <h2>Bounds the code enforces.</h2>
+      <ul class="limit-list">
+        <li><b>Interval 1–59 minutes.</b> It must stay shorter than the cache TTL; <code>auto</code> uses 4m on a 5m cache and 50m on a 1h cache. A fixed interval that is too long produces a warning in <code>ccw status</code>.</li>
+        <li><b>Idle cap.</b> Pings stop after <code>maxIdleMinutes</code> with no human activity and no real work. <code>0</code> means no time cap.</li>
+        <li><b>Ping cap.</b> At most <code>ceil(maxIdleMinutes / interval) + 1</code> pings since the last activity. While background work is running, the idle cap and that formula do not apply, but the hard cap of 24 pings since activity still does.</li>
+        <li><b>Background trust.</b> Work reported by the last Stop is trusted for 12 hours, so a completion notice that never arrives cannot warm forever.</li>
+        <li><b>Misses.</b> 2 verified cache misses in a row suspend warming until someone is active again.</li>
+        <li><b>Expired cache.</b> Never pinged: the ping would be the expensive rewrite.</li>
+        <li><b>Headless.</b> <code>claude -p</code> and Agent SDK sessions are never registered.</li>
+      </ul>
+      <p class="doc-foot">Source of truth: <a href="https://github.com/FiredMosquito831/claude-cache-warm/blob/main/scripts/lib.mjs" rel="noopener"><code>scripts/lib.mjs</code></a>. State files and the HTTP API are documented in <a href="https://github.com/FiredMosquito831/claude-cache-warm/blob/main/docs/CONTRACT.md" rel="noopener"><code>docs/CONTRACT.md</code></a>.</p>
+    </section>
+  </div>
+</div>
+</main>
+
+<footer class="site-foot">
+  <div class="shell foot-grid">
+    <div class="foot-brand">
+      <div class="brand brand-foot">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 32 32" fill="none"><path d="M16 4.5c2.4 3.6 7.5 7.4 7.5 13.1A7.5 7.5 0 0 1 16 25a7.5 7.5 0 0 1-7.5-7.4C8.5 11.9 13.6 8.1 16 4.5Z" stroke="currentColor" stroke-width="1.7"/><path d="M16 12c1.2 1.9 3.2 3.4 3.2 6a3.2 3.2 0 1 1-6.4 0c0-2.6 2-4.1 3.2-6Z" fill="currentColor"/></svg>
+        </span>
+        <span class="brand-word">Cache<em>Warm</em></span>
+      </div>
+      <p>Keep-alive pings for idle Claude Code sessions.<br>A local hook, a small waker, no daemon.</p>
+      <p class="foot-mono">v0.5.2 · MIT · Node 18+</p>
+    </div>
+    <nav class="foot-links" aria-label="Site">
+      <div>
+        <h2>Product</h2>
+        <a href="/reference/">Configuration</a>
+        <a href="/dashboard/">Dashboard</a>
+        <a href="/faq/">FAQ</a>
+        <a href="/security/">Security</a>
+      </div>
+      <div>
+        <h2>Source</h2>
+        <a href="https://github.com/FiredMosquito831/claude-cache-warm" rel="noopener">Repository</a>
+        <a href="https://github.com/FiredMosquito831/claude-cache-warm/blob/main/docs/TUTORIAL.md" rel="noopener">Tutorial</a>
+        <a href="https://github.com/FiredMosquito831/claude-cache-warm/blob/main/CHANGELOG.md" rel="noopener">Changelog</a>
+        <a href="https://github.com/FiredMosquito831/claude-cache-warm/blob/main/LICENSE" rel="noopener">MIT license</a>
+      </div>
+    </nav>
+  </div>
+  <div class="shell foot-base">
+    <span>© 2026 FiredMosquito831</span>
+    <span class="foot-domain">cachewarm.danubelabs.net</span>
+  </div>
+</footer>
+
+<script src="/assets/js/site.js" defer></script>
+</body>
+</html>

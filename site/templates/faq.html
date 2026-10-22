@@ -1,0 +1,239 @@
+{% extends "base.html" %}
+
+{% block content %}
+<header class="page-head">
+  <div class="shell">
+    <p class="eyebrow"><span class="eyebrow-dot"></span>FAQ</p>
+    <h1>Straight answers about a very small plugin.</h1>
+    <p class="lede">What it does, what it refuses to do, what a ping costs, and what it changes in your conversation. Everything here is checked against the shipped code and the project's own verified behaviour notes.</p>
+    <div class="faq-jump">
+      <a href="#basics">Basics</a><a href="#safety">Safety</a><a href="#cost">Cost</a><a href="#trouble">Troubleshooting</a><a href="#limits">Limits</a>
+    </div>
+  </div>
+</header>
+
+<div class="shell faq-body">
+
+  <section id="basics" class="faq-group">
+    <p class="eyebrow"><span class="num">01</span> Basics</p>
+    <h2>What it is, and when it acts</h2>
+
+    <details class="qa" id="what" open>
+      <summary>What does Cache Warm actually do?</summary>
+      <div class="qa-body">
+        <p>It keeps the prompt cache of idle Claude Code sessions warm. At every turn end, a Stop hook starts a small background process — a “waker” — for that session. The waker sleeps until one interval after the conversation's last request. If the session still qualifies for warming, it exits with code 2, which makes Claude Code wake the idle session with a one-line note. Claude replies <code>ok</code>. That single turn reads the whole conversation from the cache and resets the cache timer.</p>
+        <p>It is not a daemon, a scheduled task, or a monitor process. There is one waker per session and it lives only between turns.</p>
+      </div>
+    </details>
+
+    <details class="qa" id="surfaces">
+      <summary>Which Claude Code surfaces does it work in?</summary>
+      <div class="qa-body">
+        <p>The CLI, the Claude Desktop app, and IDE extensions. The plugin is an ordinary hook and runs wherever Claude Code runs hooks. The session's surface is taken from <code>CLAUDE_CODE_ENTRYPOINT</code>, so CLI, Desktop and IDE sessions can be configured independently.</p>
+      </div>
+    </details>
+
+    <details class="qa" id="when">
+      <summary>When does it ping by default?</summary>
+      <div class="qa-body">
+        <p>Only when all of these are true: warming is on for that session; something is pending in the background (default <code>warmWhen: background-work</code>); the conversation has sent no request for a full interval; the cache has not expired; activity happened within the idle cap; the context is at least 20,000 tokens; and it has not hit the ping cap.</p>
+        <p>If you want any idle session warmed, set <code>ccw when always</code> — optionally scoped to a project, surface or session. That costs more, because every idle session in scope is pinged each interval until the idle cap.</p>
+      </div>
+    </details>
+
+    <details class="qa" id="timer">
+      <summary>Does it run on a fixed schedule while I work?</summary>
+      <div class="qa-body">
+        <p>No. The timer counts from the conversation's last request, and any new request — you typing, a background agent reporting back, a scheduled task firing — supersedes the sleeping waker. The next turn end starts a fresh one. A session in use is never pinged, and nothing fires mid-turn. The project explicitly removed the older cron and monitor engines for this reason.</p>
+      </div>
+    </details>
+
+    <details class="qa" id="ttl">
+      <summary>How do I get the 1-hour cache TTL?</summary>
+      <div class="qa-body">
+        <p>Claude subscriptions get a 1-hour cache within plan limits. With an API key, set <code>CLAUDE_CODE_PROMPT_CACHE_TTL=1h</code> (or the equivalent prompt-cache TTL setting) in Claude Code. The plugin reads the TTL the session is actually using from its transcript, and <code>auto</code> picks a 50-minute interval for a 1-hour cache and a 4-minute interval for a 5-minute cache.</p>
+        <p>A 1-hour TTL turns roughly fifteen 5-minute pings into one ping per hour, which is why the README recommends it before tuning anything else.</p>
+      </div>
+    </details>
+  </section>
+
+  <section id="safety" class="faq-group">
+    <p class="eyebrow"><span class="num">02</span> Safety</p>
+    <h2>Your cache and your conversation</h2>
+
+    <details class="qa" id="safe" open>
+      <summary>Can it invalidate my prompt cache?</summary>
+      <div class="qa-body">
+        <p>Not by construction. The cache matches the <em>start</em> of each request. A ping is appended at the <em>end</em> of the conversation like any other turn, so everything before it still matches. The plugin ships no MCP server and changes no tools, system prompt, model or effort level. Claude Code's prompt-caching documentation lists plugin hooks and skills among the components that keep the cache.</p>
+        <p>Things outside its reach can still invalidate a cache: switching models, <code>/compact</code>, MCP tools changing, or upgrading Claude Code. The dashboard distinguishes verified pings from misses for exactly this reason.</p>
+      </div>
+    </details>
+
+    <details class="qa" id="conversation">
+      <summary>What does it add to my conversation?</summary>
+      <div class="qa-body">
+        <p>Each ping adds two short messages: a “Stop hook feedback” note carrying the keep-alive line, and Claude's <code>ok</code>. The note is how Claude Code surfaces a background hook waking the session. A ping is a real model turn — one cache read of the full context plus a few output tokens.</p>
+      </div>
+    </details>
+
+    <details class="qa" id="interrupt">
+      <summary>Will a ping interrupt me?</summary>
+      <div class="qa-body">
+        <p>No. A waker only exists between turns. The moment a turn starts it stands down, and a session that is busy is never due for a ping. The plugin also does not use <code>decision: "block"</code> Stop hooks or scheduled tasks.</p>
+      </div>
+    </details>
+
+    <details class="qa" id="isolation">
+      <summary>Can one session change another one's behaviour?</summary>
+      <div class="qa-body">
+        <p>No. Each session has its own waker and resolves its own settings. A Desktop session cannot change a CLI session by accident. Inside a Claude Code session, an unscoped <code>ccw</code> change applies only to that session's surface; <code>--global</code> is required to reach every surface. Every read-modify-write of shared state takes a cross-process lock and writes atomically.</p>
+      </div>
+    </details>
+
+    <details class="qa" id="privacy">
+      <summary>Does it send my data anywhere?</summary>
+      <div class="qa-body">
+        <p>The plugin itself makes no network requests. The ping is an ordinary Claude Code turn and goes wherever your Claude Code traffic already goes. The dashboard binds to <code>127.0.0.1</code> only and computes analytics read-only from local transcripts. State lives in <code>~/.claude-cache-warm/</code> (override with <code>CCW_HOME</code>). The dashboard's write endpoints require a loopback Host, a same-origin Origin and a JSON body.</p>
+        <p>See <a href="/security/">Security &amp; architecture</a> for the file and API inventory.</p>
+      </div>
+    </details>
+
+    <details class="qa" id="uninstall">
+      <summary>What happens if I uninstall it?</summary>
+      <div class="qa-body">
+        <p>The status line is restored exactly when you turn the segment off (<code>ccw statusline off</code>) or uninstall it. If the plugin is removed some other way, the status line launcher falls back to your original command. State files under <code>~/.claude-cache-warm/</code> are left alone; delete that folder to start fresh. Unrestarted sessions keep the hooks they loaded until <code>/reload-plugins</code> or a restart.</p>
+      </div>
+    </details>
+  </section>
+
+  <section id="cost" class="faq-group">
+    <p class="eyebrow"><span class="num">03</span> Cost</p>
+    <h2>What a ping buys</h2>
+
+    <details class="qa" id="ping-cost" open>
+      <summary>What does one keep-alive ping cost?</summary>
+      <div class="qa-body">
+        <p>One cache read of the whole context, plus a few output tokens. On list prices a cache read is 0.1× the base input price (0.025× for Fable and Mythos 5.1). For an 800K-token context on Opus 5 with a 1-hour cache, the plugin's estimator reports about <b>${{ cost_example.ping }}</b> per ping. A cold return of the same context is about <b>${{ cost_example.rebuild }}</b> — a cache write at 2× input price.</p>
+        <p>These are estimates from list prices, not a bill.</p>
+      </div>
+    </details>
+
+    <details class="qa" id="cost-save">
+      <summary>Will it save me money?</summary>
+      <div class="qa-body">
+        <p>Only if you actually return to large sessions after long pauses. One rebuild buys roughly {{ cost_example.break_even }} pings in the example above. Pings stop paying for themselves once they cost more than one rebuild: the idle cap and the hard per-stretch ping cap bound the downside.</p>
+        <p>Check the dashboard's “Recent cold rebuilds” table first. It shows what your real pauses cost, what warming would have cost instead, and a verdict for each one.</p>
+      </div>
+    </details>
+
+    <details class="qa" id="subscription">
+      <summary>Does it count against my subscription usage limits?</summary>
+      <div class="qa-body">
+        <p>Yes. A ping is a real model request. On a subscription it counts against your usage limits; on an API key it is billed. That is why the default is conservative: background work only, and skipped when the cache is already cold or the context is small.</p>
+      </div>
+    </details>
+
+    <details class="qa" id="cost-tune">
+      <summary>How do I make it cheaper?</summary>
+      <div class="qa-body">
+        <ul class="dot-list">
+          <li>Get the 1-hour TTL first: it turns many pings into one per hour.</li>
+          <li>Keep the default <code>warmWhen: background-work</code>; avoid <code>always</code> on large scopes.</li>
+          <li>Lower <code>maxIdleMinutes</code> so forgotten sessions stop sooner.</li>
+          <li>Raise <code>minContextTokens</code> so small contexts are skipped.</li>
+          <li>Use the dashboard to check real rebuilds before enabling a scope.</li>
+        </ul>
+      </div>
+    </details>
+  </section>
+
+  <section id="trouble" class="faq-group">
+    <p class="eyebrow"><span class="num">04</span> Troubleshooting</p>
+    <h2>Why isn't it pinging?</h2>
+
+    <details class="qa" id="no-ping" open>
+      <summary>My session says “standing by” or “no-work”.</summary>
+      <div class="qa-body">
+        <p>That is the default policy working: nothing is pending in the background for that session. Use <code>ccw when always</code> — optionally <code>--session</code> or <code>--project</code> — to warm a plain idle session. Remember that monitors are watchers that can run forever and deliberately do not count as pending work.</p>
+      </div>
+    </details>
+
+    <details class="qa" id="not-listed">
+      <summary>My session is not listed at all.</summary>
+      <div class="qa-body">
+        <p>A session registers on its first hook event after the plugin is enabled. Run <code>/reload-plugins</code> in sessions that were already open, or start a new one. Headless runs (<code>claude -p</code>, Agent SDK) are never registered, by design.</p>
+      </div>
+    </details>
+
+    <details class="qa" id="expired">
+      <summary>It says “expired” after my laptop slept.</summary>
+      <div class="qa-body">
+        <p>The cache timed out while the machine slept. The plugin will not ping an expired cache, because that ping <em>would be</em> the expensive rewrite. The next real turn rebuilds it normally.</p>
+      </div>
+    </details>
+
+    <details class="qa" id="warning">
+      <summary>I see “interval … is not shorter than the … TTL”.</summary>
+      <div class="qa-body">
+        <p>That session is using the 5-minute cache, and the configured interval is 5 minutes or longer. Use <code>ccw interval auto</code>, or enable the 1-hour TTL. <code>auto</code> reads the TTL from the session's transcript and picks 4 or 50 minutes.</p>
+      </div>
+    </details>
+
+    <details class="qa" id="misses">
+      <summary>Some pings are not verified as cache hits. Is that a bug?</summary>
+      <div class="qa-body">
+        <p>Not necessarily. Something else can invalidate the cache between the ping and the next request: a model switch, <code>/compact</code>, MCP tools changing, or an upgrade. Two verified misses in a row suspend warming for that session until you are active in it again, so a broken setup cannot keep paying for rewrites. <code>ccw doctor</code> shows verified pings per surface; <code>ccw events 30</code> shows the recent log.</p>
+      </div>
+    </details>
+
+    <details class="qa" id="selftest">
+      <summary>How do I prove the whole loop works?</summary>
+      <div class="qa-body">
+        <p>Run <code>/cache-warm:test</code> (or <code>ccw test</code>) in any session, CLI or Desktop app, then do not type for about a minute. A keep-alive note arrives, Claude answers <code>ok</code>, the ping is checked against the transcript, and the session's prior settings are restored. If nothing arrives within two minutes, that surface is not waking sessions; settings restore themselves after fifteen minutes.</p>
+      </div>
+    </details>
+
+    <details class="qa" id="statusline-missing">
+      <summary>The status line segment is missing in one folder.</summary>
+      <div class="qa-body">
+        <p>That folder has its own status line, which wins over the user-level one. Run <code>ccw statusline</code> there to see which file is in effect, then <code>ccw statusline install --file=&lt;that file&gt;</code>. A shared project status line is never edited; the plugin uses a personal <code>settings.local.json</code> overlay instead.</p>
+      </div>
+    </details>
+  </section>
+
+  <section id="limits" class="faq-group">
+    <p class="eyebrow"><span class="num">05</span> Limits</p>
+    <h2>What it cannot do</h2>
+
+    <details class="qa" id="foreground">
+      <summary>Does it keep a foreground subagent's cache warm?</summary>
+      <div class="qa-body">
+        <p>No. A foreground subagent blocks the main conversation inside a tool call; nothing can refresh the main cache until it returns. Warming covers background work — subagents, background tasks, background shells, workflows and scheduled tasks that the session is waiting on.</p>
+      </div>
+    </details>
+
+    <details class="qa" id="invalidate">
+      <summary>Can it stop other things from invalidating the cache?</summary>
+      <div class="qa-body">
+        <p>No. A model switch, <code>/compact</code>, a change in MCP tools, or a Claude Code upgrade can invalidate the context regardless of warming. See <a href="https://code.claude.com/docs/en/prompt-caching" rel="noopener">How Claude Code uses prompt caching</a>.</p>
+      </div>
+    </details>
+
+    <details class="qa" id="platforms">
+      <summary>Which platforms are supported?</summary>
+      <div class="qa-body">
+        <p>The plugin, CLI, dashboard and status line are Node.js (18+) and platform-neutral. The optional tray app is Tauri v2; the repository's development notes and packaging instructions are written for Windows (MSVC toolchain, WebView2). It is optional — every feature except the global hotkeys is available without it.</p>
+      </div>
+    </details>
+
+    <details class="qa" id="older">
+      <summary>I'm upgrading from an older version. What happens to my state?</summary>
+      <div class="qa-body">
+        <p>On the first hook run after updating, the state directory is migrated automatically. A backup is written to <code>config.v1.backup.json</code>; values that only mirrored the plugin tab go back to the plugin tab; per-session switches become session overrides; ping history is kept; junk registrations are pruned. Leftover 0.2 scheduled tasks are told to delete themselves when they next fire. Run <code>/reload-plugins</code> in every open session after updating.</p>
+      </div>
+    </details>
+
+    <p class="faq-more">Still stuck? <code>ccw doctor</code> and <code>ccw events 30</code> answer most questions. Open an issue on <a href="https://github.com/FiredMosquito831/claude-cache-warm/issues" rel="noopener">GitHub</a>.</p>
+  </section>
+</div>
+{% endblock %}

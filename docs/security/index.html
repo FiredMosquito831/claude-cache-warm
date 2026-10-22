@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Security and architecture — Cache Warm</title>
+<meta name="description" content="How Cache Warm touches your machine: five hook events, a local state directory, read-only transcript access, a loopback-only dashboard, no telemetry and no runtime dependencies.">
+<meta name="keywords" content="Cache Warm security, Claude Code plugin security, local dashboard, loopback, MIT, prompt cache privacy">
+<meta name="author" content="FiredMosquito831">
+<meta name="robots" content="index,follow">
+<link rel="canonical" href="https://cachewarm.danubelabs.net/security/">
+<meta name="theme-color" content="#f6efe2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#17120e" media="(prefers-color-scheme: dark)">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Cache Warm">
+<meta property="og:title" content="Security and architecture — Cache Warm">
+<meta property="og:description" content="How Cache Warm touches your machine: five hook events, a local state directory, read-only transcript access, a loopback-only dashboard, no telemetry and no runtime dependencies.">
+<meta property="og:url" content="https://cachewarm.danubelabs.net/security/">
+<meta property="og:image" content="https://cachewarm.danubelabs.net/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Cache Warm — prompt-cache keep-alive for Claude Code">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Security and architecture — Cache Warm">
+<meta name="twitter:description" content="How Cache Warm touches your machine: five hook events, a local state directory, read-only transcript access, a loopback-only dashboard, no telemetry and no runtime dependencies.">
+<meta name="twitter:image" content="https://cachewarm.danubelabs.net/og.png">
+<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/assets/favicon.svg">
+<link rel="preload" href="/assets/fonts/fraunces-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/assets/fonts/inter-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/assets/css/style.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Cache Warm",
+  "alternateName": "claude-cache-warm",
+  "applicationCategory": "DeveloperApplication",
+  "applicationSubCategory": "Claude Code plugin",
+  "operatingSystem": "Windows, macOS, Linux",
+  "softwareVersion": "0.5.2",
+  "softwareRequirements": "Node.js 18+ and a Claude Code version that supports asyncRewake hooks",
+  "description": "Keep-alive pings for idle Claude Code sessions. Scoped settings, a status line segment, a local dashboard and a self-checking waker. Node 18+, zero runtime dependencies.",
+  "url": "https://cachewarm.danubelabs.net/",
+  "codeRepository": "https://github.com/FiredMosquito831/claude-cache-warm",
+  "downloadUrl": "https://github.com/FiredMosquito831/claude-cache-warm",
+  "license": "https://opensource.org/licenses/MIT",
+  "isAccessibleForFree": true,
+  "author": {
+    "@type": "Person",
+    "name": "FiredMosquito831",
+    "url": "https://github.com/FiredMosquito831"
+  },
+  "offers": {
+    "@type": "Offer",
+    "price": "0",
+    "priceCurrency": "USD"
+  },
+  "keywords": "Claude Code plugin, prompt cache, cache warm, keep-alive, prompt caching, Claude Code cost, cache TTL, status line, ccw",
+  "featureList": [
+    "Keep-alive pings for idle Claude Code sessions",
+    "Session, project, surface and global scopes",
+    "Status line segment that wraps an existing line",
+    "Local dashboard with transcript analytics",
+    "Verified pings with automatic suspension after misses"
+  ]
+}
+</script>
+</head>
+<body class="page-security">
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site-head" data-head>
+  <div class="shell head-inner">
+    <a class="brand" href="/" aria-label="Cache Warm home">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 32 32" fill="none"><path d="M16 4.5c2.4 3.6 7.5 7.4 7.5 13.1A7.5 7.5 0 0 1 16 25a7.5 7.5 0 0 1-7.5-7.4C8.5 11.9 13.6 8.1 16 4.5Z" stroke="currentColor" stroke-width="1.7"/><path d="M16 12c1.2 1.9 3.2 3.4 3.2 6a3.2 3.2 0 1 1-6.4 0c0-2.6 2-4.1 3.2-6Z" fill="currentColor"/></svg>
+      </span>
+      <span class="brand-word">Cache<em>Warm</em></span>
+      <span class="brand-ver">v0.5.2</span>
+    </a>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="nav" data-nav-toggle>
+      <span class="sr-only">Menu</span><span></span><span></span>
+    </button>
+    <nav class="nav" id="nav" aria-label="Primary">
+      <a href="/" >Overview</a>
+      <a href="/reference/" >Reference</a>
+      <a href="/dashboard/" >Dashboard</a>
+      <a href="/faq/" >FAQ</a>
+      <a href="/security/" aria-current="page">Security</a>
+      <a class="nav-gh" href="https://github.com/FiredMosquito831/claude-cache-warm" rel="noopener">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+        GitHub
+      </a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+<header class="page-head">
+  <div class="shell">
+    <p class="eyebrow"><span class="eyebrow-dot"></span>Security <span class="sep">/</span> architecture</p>
+    <h1>Local by default. Explicit where it matters.</h1>
+    <p class="lede">Cache Warm runs inside Claude Code, reads local transcripts, and exposes a loopback-only dashboard. It ships no server, no telemetry and no runtime dependencies. Here is exactly what it touches.</p>
+    <div class="page-meta">
+      <span>License <b>MIT</b></span>
+      <span>Runtime deps <b>0</b></span>
+      <span>Network calls <b>none</b></span>
+      <span>Dashboard bind <b>127.0.0.1</b></span>
+    </div>
+  </div>
+</header>
+
+<section class="section">
+  <div class="shell security-grid">
+    <div class="security-main">
+      <section class="doc-section" id="model">
+        <p class="eyebrow"><span class="num">01</span> Trust model</p>
+        <h2>A hook, a state directory, and a loopback server.</h2>
+        <p>The plugin is ordinary Node.js launched by Claude Code. Its hooks always exit successfully and never block a prompt. It does not start a daemon, create scheduled tasks, or install a network service. The only listening socket is the optional dashboard, bound to <code>127.0.0.1</code>.</p>
+        <p>Each hook error is written to the local event log rather than to stderr. The waker is the one deliberate exception: it exits with code 2 when a session should be woken, which is how Claude Code's <code>asyncRewake</code> hook contract works.</p>
+      </section>
+
+      <section class="doc-section" id="state">
+        <p class="eyebrow"><span class="num">02</span> Files</p>
+        <h2>What lives in <code>~/.claude-cache-warm/</code>.</h2>
+        <p>Override the location with <code>CCW_HOME</code>. Session state and settings are readable JSON; deleting the directory removes all plugin state.</p>
+        <div class="table-wrap">
+          <table class="state-table">
+            <thead><tr><th>Path</th><th>Written by</th><th>Contains</th></tr></thead>
+            <tbody>
+              <tr><td><code>config.json</code></td><td>CLI, dashboard, tray, hook</td><td>Explicit settings per scope (schema 2).</td></tr>
+              <tr><td><code>plugin-options.json</code></td><td>SessionStart hook</td><td>Snapshot of the plugin-tab options.</td></tr>
+              <tr><td><code>sessions/&lt;id&gt;.json</code></td><td>hooks, waker, CLI, dashboard</td><td>Identity, activity clocks, background-work snapshot, overrides.</td></tr>
+              <tr><td><code>sessions/&lt;id&gt;.state.json</code></td><td>waker, hooks</td><td>Ping history, the last ping's verdict, suspension, the current waker.</td></tr>
+              <tr><td><code>statusline.json</code>, <code>statusline-launcher.mjs</code></td><td><code>ccw statusline</code></td><td>Status line installs and the launcher they point at.</td></tr>
+              <tr><td><code>events.jsonl</code></td><td>everyone</td><td>Append-only local log, rotated at 4 MB.</td></tr>
+              <tr><td><code>analytics-cache.json</code></td><td>dashboard</td><td>Incremental transcript parse cache. Safe to delete.</td></tr>
+              <tr><td><code>config.v1.backup.json</code></td><td>migration</td><td>The pre-0.3 config, kept as a backup.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="aside-note">Every JSON write is atomic (temp file plus rename, retried on Windows). Every read-modify-write holds a <code>&lt;file&gt;.lock</code> directory, stale after five seconds; writers give up after two seconds rather than stall a hook. The Rust tray app takes the same lock.</p>
+      </section>
+
+      <section class="doc-section" id="transcripts">
+        <p class="eyebrow"><span class="num">03</span> Transcripts</p>
+        <h2>Read-only, and only the tail.</h2>
+        <p>The waker reads the tail of the session transcript to learn the context size, model and cache TTL, and to judge whether the last ping was a cache read or a rewrite. The dashboard's analytics parse <code>~/.claude/projects/**/*.jsonl</code> read-only and keep an incremental offset cache so a cold scan is never repeated. No transcript content is transmitted by the plugin.</p>
+      </section>
+
+      <section class="doc-section" id="http">
+        <p class="eyebrow"><span class="num">04</span> Dashboard API</p>
+        <h2>Reads are harmless; writes are fenced.</h2>
+        <p>Any web page can fire requests at localhost. The server requires a loopback <code>Host</code> for every request. Write endpoints additionally require a same-origin (or absent) <code>Origin</code> and a JSON content type, which a cross-site form cannot supply without a preflight the server never grants. Responses carry <code>cache-control: no-store</code> and <code>x-content-type-options: nosniff</code>.</p>
+        <div class="code-block">
+          <pre><code>GET  /api/health          { ok: true, version }
+GET  /api/state           scopes, sessions, folders, defaults
+GET  /api/analytics?days=7
+POST /api/scope           { scope, patch } or { scope, reset: true }
+POST /api/config          0.2 compatibility: global scope
+POST /api/sessions/&lt;id&gt;   0.2 compatibility: session overrides</code></pre>
+        </div>
+        <p class="aside-note">The full file and API contract is in <a href="https://github.com/FiredMosquito831/claude-cache-warm/blob/main/docs/CONTRACT.md" rel="noopener"><code>docs/CONTRACT.md</code></a>.</p>
+      </section>
+
+      <section class="doc-section" id="settings">
+        <p class="eyebrow"><span class="num">05</span> Your settings</p>
+        <h2>Settings files are user property.</h2>
+        <ul class="dot-list">
+          <li>The status line installer backs up a settings file as <code>*.ccw-backup</code> before its first change.</li>
+          <li>It never wraps its own launcher, never edits a shared project <code>settings.json</code>, and never writes invalid JSON.</li>
+          <li><code>off</code> and uninstall restore the originals exactly.</li>
+          <li>The plugin does not need credentials and never asks for an API key.</li>
+        </ul>
+      </section>
+
+      <section class="doc-section" id="report">
+        <p class="eyebrow"><span class="num">06</span> Reporting</p>
+        <h2>Found a problem?</h2>
+        <p>Please report vulnerabilities privately via the repository's <a href="https://github.com/FiredMosquito831/claude-cache-warm/security" rel="noopener">Security tab</a> or the contact details in <a href="https://github.com/FiredMosquito831/claude-cache-warm/blob/main/SECURITY.md" rel="noopener"><code>SECURITY.md</code></a>. For ordinary bugs, open an <a href="https://github.com/FiredMosquito831/claude-cache-warm/issues" rel="noopener">issue</a>.</p>
+        <p>The project is released under the <a href="https://github.com/FiredMosquito831/claude-cache-warm/blob/main/LICENSE" rel="noopener">MIT license</a>.</p>
+      </section>
+    </div>
+
+    <aside class="security-side">
+      <div class="side-card">
+        <p class="side-label">Surface area</p>
+        <ul class="spec-list">
+          <li><span>Hooks</span><b>5 events</b></li>
+          <li><span>Runtime deps</span><b>0</b></li>
+          <li><span>Listening ports</span><b>1 (loopback)</b></li>
+          <li><span>Telemetry</span><b>none</b></li>
+          <li><span>Credentials</span><b>none</b></li>
+          <li><span>License</span><b>MIT</b></li>
+        </ul>
+      </div>
+      <div class="side-card side-note">
+        <p class="side-label">Failure posture</p>
+        <p>Hooks fail closed and never block a turn. If the waker dies, pings stop until the next turn end. An expired cache is never pinged. Two consecutive verified misses suspend the session.</p>
+      </div>
+      <div class="side-card side-note">
+        <p class="side-label">Related</p>
+        <p><a href="/reference/">Configuration reference →</a></p>
+        <p><a href="/faq/#safe">FAQ: cache safety →</a></p>
+        <p><a href="https://github.com/FiredMosquito831/claude-cache-warm/blob/main/CLAUDE.md" rel="noopener">Architecture notes →</a></p>
+      </div>
+    </aside>
+  </div>
+</section>
+</main>
+
+<footer class="site-foot">
+  <div class="shell foot-grid">
+    <div class="foot-brand">
+      <div class="brand brand-foot">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 32 32" fill="none"><path d="M16 4.5c2.4 3.6 7.5 7.4 7.5 13.1A7.5 7.5 0 0 1 16 25a7.5 7.5 0 0 1-7.5-7.4C8.5 11.9 13.6 8.1 16 4.5Z" stroke="currentColor" stroke-width="1.7"/><path d="M16 12c1.2 1.9 3.2 3.4 3.2 6a3.2 3.2 0 1 1-6.4 0c0-2.6 2-4.1 3.2-6Z" fill="currentColor"/></svg>
+        </span>
+        <span class="brand-word">Cache<em>Warm</em></span>
+      </div>
+      <p>Keep-alive pings for idle Claude Code sessions.<br>A local hook, a small waker, no daemon.</p>
+      <p class="foot-mono">v0.5.2 · MIT · Node 18+</p>
+    </div>
+    <nav class="foot-links" aria-label="Site">
+      <div>
+        <h2>Product</h2>
+        <a href="/reference/">Configuration</a>
+        <a href="/dashboard/">Dashboard</a>
+        <a href="/faq/">FAQ</a>
+        <a href="/security/">Security</a>
+      </div>
+      <div>
+        <h2>Source</h2>
+        <a href="https://github.com/FiredMosquito831/claude-cache-warm" rel="noopener">Repository</a>
+        <a href="https://github.com/FiredMosquito831/claude-cache-warm/blob/main/docs/TUTORIAL.md" rel="noopener">Tutorial</a>
+        <a href="https://github.com/FiredMosquito831/claude-cache-warm/blob/main/CHANGELOG.md" rel="noopener">Changelog</a>
+        <a href="https://github.com/FiredMosquito831/claude-cache-warm/blob/main/LICENSE" rel="noopener">MIT license</a>
+      </div>
+    </nav>
+  </div>
+  <div class="shell foot-base">
+    <span>© 2026 FiredMosquito831</span>
+    <span class="foot-domain">cachewarm.danubelabs.net</span>
+  </div>
+</footer>
+
+<script src="/assets/js/site.js" defer></script>
+</body>
+</html>
