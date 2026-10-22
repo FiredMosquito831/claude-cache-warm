@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cache Warm — Open Graph card</title>
+<style>
+  @font-face { font-family: 'Fraunces'; src: url('static/fonts/fraunces-latin.woff2') format('woff2'); font-weight: 300 700; font-display: block; }
+  @font-face { font-family: 'Inter'; src: url('static/fonts/inter-latin.woff2') format('woff2'); font-weight: 400 700; font-display: block; }
+  @font-face { font-family: 'Plex'; src: url('static/fonts/plex-mono-500.woff2') format('woff2'); font-weight: 500; font-display: block; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; width: 1200px; height: 630px; overflow: hidden; }
+  body {
+    background: #17120e; color: #f6ecda;
+    font-family: 'Inter', sans-serif; position: relative;
+  }
+  .grid {
+    position: absolute; inset: 0;
+    background-image: linear-gradient(to right, rgba(246,236,218,.06) 1px, transparent 1px), linear-gradient(to bottom, rgba(246,236,218,.06) 1px, transparent 1px);
+    background-size: 80px 80px;
+    mask-image: radial-gradient(ellipse 85% 90% at 72% 30%, #000, transparent 78%);
+  }
+  .glow { position: absolute; width: 720px; height: 720px; right: -130px; top: -260px; border-radius: 50%; background: radial-gradient(circle, rgba(233,168,74,.42), rgba(200,90,40,.16) 45%, transparent 70%); filter: blur(12px); }
+  .frame { position: absolute; inset: 40px; border: 1px solid rgba(246,236,218,.14); border-radius: 22px; }
+  .inner { position: relative; padding: 72px 78px; height: 100%; display: flex; flex-direction: column; justify-content: space-between; }
+  .brand { display: flex; align-items: center; gap: 13px; font-family: 'Plex', monospace; font-size: 17px; letter-spacing: .13em; text-transform: uppercase; color: #c9b79c; }
+  .brand svg { width: 34px; height: 34px; }
+  h1 { font-family: 'Fraunces', serif; font-weight: 400; font-size: 82px; line-height: .99; letter-spacing: -.035em; margin: 0; max-width: 740px; }
+  h1 em { font-style: italic; color: #f0b45a; }
+  p { margin: 24px 0 0; font-size: 24px; line-height: 1.45; color: #c9b79c; max-width: 600px; }
+  .foot { display: flex; align-items: center; justify-content: space-between; gap: 30px; }
+  .pills { display: flex; gap: 10px; flex-wrap: wrap; }
+  .pill { font-family: 'Plex', monospace; font-size: 14px; letter-spacing: .05em; border: 1px solid rgba(246,236,218,.22); border-radius: 30px; padding: 8px 15px; color: #d9c8b0; }
+  .host { font-family: 'Plex', monospace; font-size: 16px; color: #8d7a63; }
+  .thermo { position: absolute; right: 86px; top: 128px; width: 236px; height: 236px; border-radius: 50%; display: grid; place-items: center;
+    background: conic-gradient(from 210deg, #e9a84a 0%, #ffd89a 70%, rgba(246,236,218,.10) 0); }
+  .thermo::before { content: ""; position: absolute; inset: 16px; border-radius: 50%; background: #17120e; box-shadow: inset 0 0 0 1px rgba(246,236,218,.12); }
+  .thermo div { position: relative; text-align: center; }
+  .thermo b { display: block; font-family: 'Fraunces', serif; font-weight: 400; font-size: 63px; line-height: 1; color: #ffe8c2; }
+  .thermo span { display: block; font-family: 'Plex', monospace; font-size: 9.5px; letter-spacing: .09em; text-transform: uppercase; color: #b9a78f; margin-top: 9px; white-space: nowrap; }
+</style>
+</head>
+<body>
+  <div class="grid"></div><div class="glow"></div><div class="frame"></div>
+  <div class="inner">
+    <div>
+      <div class="brand">
+        <svg viewBox="0 0 32 32" fill="none"><path d="M16 4.5c2.4 3.6 7.5 7.4 7.5 13.1A7.5 7.5 0 0 1 16 25a7.5 7.5 0 0 1-7.5-7.4C8.5 11.9 13.6 8.1 16 4.5Z" stroke="#e9a84a" stroke-width="1.7"/><path d="M16 12c1.2 1.9 3.2 3.4 3.2 6a3.2 3.2 0 1 1-6.4 0c0-2.6 2-4.1 3.2-6Z" fill="#e9a84a"/></svg>
+        Cache Warm · Claude Code plugin
+      </div>
+      <h1>Keep the cache <em>warm.</em><br>Skip the cold return.</h1>
+      <p>Keep-alive pings for idle Claude Code sessions, timed from the conversation's last request.</p>
+    </div>
+    <div class="foot">
+      <div class="pills"><span class="pill">Scoped settings</span><span class="pill">Status line</span><span class="pill">Local dashboard</span><span class="pill">Self-checking</span></div>
+      <span class="host">cachewarm.danubelabs.net</span>
+    </div>
+  </div>
+  <div class="thermo"><div><b>50m</b><span>auto interval · 1h cache</span></div></div>
+</body>
+</html>

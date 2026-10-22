@@ -1,0 +1,223 @@
+{% extends "base.html" %}
+
+{% block content %}
+<header class="page-head">
+  <div class="shell">
+    <p class="eyebrow"><span class="eyebrow-dot"></span>Reference <span class="sep">/</span> schema 2</p>
+    <h1>Every setting, scope, and state.</h1>
+    <p class="lede">The configuration surface of Cache Warm v{{ version }}, generated from <code>scripts/lib.mjs</code> and the plugin manifest. Defaults below are the values the code ships with.</p>
+    <div class="page-meta">
+      <span>Plugin <b>v{{ version }}</b></span>
+      <span>Config <b>schema 2</b></span>
+      <span>Source <b>scripts/lib.mjs</b></span>
+    </div>
+  </div>
+</header>
+
+<div class="shell doc-layout">
+  <aside class="doc-toc" aria-label="On this page">
+    <p class="toc-title">On this page</p>
+    <nav>
+      <a href="#resolution">Resolution order</a>
+      <a href="#settings">Settings</a>
+      <a href="#plugin-tab">Plugin tab</a>
+      <a href="#statusline">Status line parts</a>
+      <a href="#statuses">Session statuses</a>
+      <a href="#commands">Commands</a>
+      <a href="#scopes">Scopes in practice</a>
+      <a href="#cost">Cost model</a>
+      <a href="#limits">Limits</a>
+    </nav>
+    <a class="toc-gh" href="https://github.com/FiredMosquito831/claude-cache-warm/blob/main/docs/CONTRACT.md" rel="noopener">State-file contract ↗</a>
+  </aside>
+
+  <div class="doc-body">
+    <section class="doc-section" id="resolution">
+      <p class="eyebrow"><span class="num">01</span> Resolution</p>
+      <h2>Most specific scope wins.</h2>
+      <p>Each session resolves every setting from the first scope that defines it. Values that are unset simply inherit. Two scopes can never accidentally change each other's surfaces: inside a Claude Code session, an unscoped <code>ccw</code> change applies to that session's surface only.</p>
+      <div class="resolution">
+        <span class="res-node res-1">session<small>overrides</small></span>
+        <i>›</i>
+        <span class="res-node res-2">project folder<small>folder and below</small></span>
+        <i>›</i>
+        <span class="res-node res-3">surface<small>cli · desktop · ide</small></span>
+        <i>›</i>
+        <span class="res-node res-4">global<small>machine</small></span>
+        <i>›</i>
+        <span class="res-node res-5">plugin tab<small>options</small></span>
+        <i>›</i>
+        <span class="res-node res-6">defaults<small>in code</small></span>
+      </div>
+      <div class="code-block">
+        <pre><code># what this session actually uses, and where each value comes from
+ccw config --session
+
+# the same, for one scope
+ccw config --desktop
+ccw config --project
+
+# every scope that currently holds a setting
+ccw scopes</code></pre>
+      </div>
+      <div class="callout">
+        <b>Surfaces come from the environment.</b>
+        <p><code>CLAUDE_CODE_ENTRYPOINT</code> maps to <code>cli</code>; anything containing <code>desktop</code> to <code>desktop</code>; VS Code, JetBrains, Cursor and Windsurf entrypoints to <code>ide</code>. <code>sdk-*</code> runs — <code>claude -p</code> and the Agent SDK — are <code>headless</code> and are never registered or warmed.</p>
+      </div>
+    </section>
+
+    <section class="doc-section" id="settings">
+      <p class="eyebrow"><span class="num">02</span> Settings</p>
+      <h2>{{ settings_options|length }} settings, validated before they are written.</h2>
+      <p>The first five are scoped. The rest make sense once per machine and can only be set at the global scope. Values are stored as JSON in <code>~/.claude-cache-warm/config.json</code>; only explicitly set values are persisted.</p>
+
+      <div class="option-list">
+      {% for opt in settings_options %}
+        <article class="option" id="opt-{{ opt.key }}">
+          <div class="option-head">
+            <code class="option-key">{{ opt.key }}</code>
+            <span class="option-badge">{{ 'global only' if opt.global_only else 'scoped' }}</span>
+            {% if opt.plugin_only %}<span class="option-badge subtle">plugin tab</span>{% endif %}
+          </div>
+          <h3>{{ opt.title }}</h3>
+          <p>{{ opt.description }}</p>
+          <dl class="option-meta">
+            <div><dt>Default</dt><dd><code>{{ opt.default_display }}</code></dd></div>
+            <div><dt>Accepted</dt><dd>{{ opt.rules }}</dd></div>
+            <div><dt>Set with</dt><dd><code>{{ opt.set_with }}</code></dd></div>
+          </dl>
+        </article>
+      {% endfor %}
+      </div>
+    </section>
+
+    <section class="doc-section" id="plugin-tab">
+      <p class="eyebrow"><span class="num">03</span> Plugin tab</p>
+      <h2>Those options in <code>/plugin</code> are a real scope.</h2>
+      <p>Claude Code passes plugin-tab values to hooks as <code>CLAUDE_PLUGIN_OPTION_*</code>. The SessionStart hook snapshots them, so the CLI, status line and dashboard can see them too. Editing a value in the tab makes it win over the override it would otherwise sit behind; untouched tab values never undo edits made with <code>ccw</code> or the dashboard. Edits apply immediately through the <code>ConfigChange</code> hook, and sleeping timers pick them up within a minute.</p>
+      <p>The tab exposes one extra convenience option that is not a stored setting:</p>
+      <div class="option-list compact">
+        {% set dm = options|selectattr('key','equalto','desktopMode')|first %}
+        <article class="option" id="opt-desktopMode">
+          <div class="option-head"><code class="option-key">{{ dm.key }}</code><span class="option-badge subtle">plugin tab only</span></div>
+          <h3>{{ dm.title }}</h3>
+          <p>{{ dm.description }}</p>
+          <dl class="option-meta">
+            <div><dt>Default</dt><dd><code>{{ dm.default_display }}</code></dd></div>
+            <div><dt>Accepted</dt><dd>{{ dm.rules }}</dd></div>
+          </dl>
+        </article>
+      </div>
+    </section>
+
+    <section class="doc-section" id="statusline">
+      <p class="eyebrow"><span class="num">04</span> Status line</p>
+      <h2>{{ segments|length }} parts, in the order you choose.</h2>
+      <p>Configure with <code>ccw set statuslineSegments model,folder,warm</code>, the plugin tab, or the dashboard's Global tab. Parts without data are omitted. Long lines wrap onto the next row at part boundaries. The segment wraps your existing status line — it never replaces it.</p>
+      <div class="segment-grid">
+        {% for seg in segments %}
+        <div class="segment {% if seg.key in defaults.statuslineSegments %}default{% endif %}">
+          <code>{{ seg.key }}</code>
+          <p>{{ seg.description }}</p>
+          {% if seg.key in defaults.statuslineSegments %}<span class="seg-mark">on by default</span>{% else %}<span class="seg-mark off">opt-in</span>{% endif %}
+        </div>
+        {% endfor %}
+      </div>
+      <div class="code-block">
+        <pre><code># default order
+ccw set statuslineSegments {{ defaults.statuslineSegments|join(',') }}
+
+# the segment itself: auto (default), wrap-only, off
+ccw statusline auto
+ccw statusline wrap-only
+ccw statusline off        # restores every original exactly</code></pre>
+      </div>
+    </section>
+
+    <section class="doc-section" id="statuses">
+      <p class="eyebrow"><span class="num">05</span> States</p>
+      <h2>What the waker decided, and why.</h2>
+      <p>One function — <code>computeStatus()</code> — is the single source of truth. The waker acts on it; the CLI, status line and dashboard only display it. These are the states the code can return.</p>
+      <div class="status-table">
+        {% for st in statuses %}
+        <div class="status-row">
+          <span class="status-name"><i class="st-dot {{ st.key }}"></i><code>{{ st.key }}</code></span>
+          <p>{{ st.description }}</p>
+        </div>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section class="doc-section" id="commands">
+      <p class="eyebrow"><span class="num">06</span> Commands</p>
+      <h2>Slash commands and the <code>ccw</code> CLI.</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>In Claude Code</th><th>Shell</th><th>What it does</th></tr></thead>
+          <tbody>
+          {% for c in commands %}
+            <tr><td><code>{{ c.slash }}</code></td><td><code>{{ c.shell }}</code></td><td>{{ c.description }}</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <p class="table-note"><code>bin/ccw</code> is on the Bash tool's <code>PATH</code>. From a plain terminal, run <code>node scripts/ccw.mjs &lt;command&gt;</code>, or install the plugin's <code>bin</code> yourself.</p>
+    </section>
+
+    <section class="doc-section" id="scopes">
+      <p class="eyebrow"><span class="num">07</span> Scopes</p>
+      <h2>Change one session, one folder, one surface, or everything.</h2>
+      <div class="code-block">
+        <pre><code>ccw interval 30 --global              # every session
+ccw when always --desktop             # every Desktop-app session
+ccw off --cli                         # every CLI session
+ccw interval 20 --project             # this folder and everything below it
+ccw set maxIdleMinutes 600 --session  # just this session
+ccw config --session                  # effective values and their sources
+ccw reset --desktop                   # that scope inherits everything again
+ccw unset intervalMinutes --project   # drop one key at one scope</code></pre>
+      </div>
+      <div class="callout warn">
+        <b>An unscoped change is not global inside a session.</b>
+        <p>Run inside Claude Code, <code>ccw off</code> in the Desktop app turns off Desktop sessions, not your CLI ones. Changing every surface at once needs <code>--global</code>. From a plain terminal, unscoped means global.</p>
+      </div>
+      <h3 id="scope-words">Scope words for slash commands</h3>
+      <p><code>session</code>, <code>project</code>, <code>cli</code>, <code>desktop</code>, <code>ide</code> — for example <code>/cache-warm:off desktop</code> or <code>/cache-warm:on session</code>.</p>
+    </section>
+
+    <section class="doc-section" id="cost">
+      <p class="eyebrow"><span class="num">08</span> Cost</p>
+      <h2>One cache read versus one cache write.</h2>
+      <p>The plugin estimates each ping and each avoided rebuild from list prices in its own source. It is an estimate, not a bill — on a subscription the same tokens come out of usage limits.</p>
+      <div class="formula-grid">
+        <div class="formula">
+          <span>Ping</span>
+          <code>tokens × input price × cache-read multiplier</code>
+          <p>Cache reads are 0.1× base input price, except Fable and Mythos 5.1 at 0.025×.</p>
+        </div>
+        <div class="formula">
+          <span>Rebuild</span>
+          <code>tokens × input price × write multiplier</code>
+          <p>Cache writes are 1.25× for a 5-minute cache and 2× for a 1-hour cache.</p>
+        </div>
+      </div>
+      <p>For the worked example on the overview — 800K tokens on Opus 5 with a 1-hour cache — the estimator reports roughly <b>${{ cost_example.ping }}</b> per ping and <b>${{ cost_example.rebuild }}</b> per cold rebuild, a break-even of about <b>{{ cost_example.break_even }}</b> pings. With a {{ defaults.maxIdleMinutes }}-minute idle cap, warming cannot continue indefinitely; with <code>maxIdleMinutes</code> at <code>0</code> a hard cap of {{ max_pings_per_idle }} pings per idle stretch still applies.</p>
+    </section>
+
+    <section class="doc-section" id="limits">
+      <p class="eyebrow"><span class="num">09</span> Limits</p>
+      <h2>Bounds the code enforces.</h2>
+      <ul class="limit-list">
+        <li><b>Interval 1–59 minutes.</b> It must stay shorter than the cache TTL; <code>auto</code> uses {{ auto_interval['5m'] }}m on a 5m cache and {{ auto_interval['1h'] }}m on a 1h cache. A fixed interval that is too long produces a warning in <code>ccw status</code>.</li>
+        <li><b>Idle cap.</b> Pings stop after <code>maxIdleMinutes</code> with no human activity and no real work. <code>0</code> means no time cap.</li>
+        <li><b>Ping cap.</b> At most <code>ceil(maxIdleMinutes / interval) + 1</code> pings since the last activity. While background work is running, the idle cap and that formula do not apply, but the hard cap of {{ max_pings_per_idle }} pings since activity still does.</li>
+        <li><b>Background trust.</b> Work reported by the last Stop is trusted for {{ work_trust_hours }} hours, so a completion notice that never arrives cannot warm forever.</li>
+        <li><b>Misses.</b> {{ misses_before_suspend }} verified cache misses in a row suspend warming until someone is active again.</li>
+        <li><b>Expired cache.</b> Never pinged: the ping would be the expensive rewrite.</li>
+        <li><b>Headless.</b> <code>claude -p</code> and Agent SDK sessions are never registered.</li>
+      </ul>
+      <p class="doc-foot">Source of truth: <a href="https://github.com/FiredMosquito831/claude-cache-warm/blob/main/scripts/lib.mjs" rel="noopener"><code>scripts/lib.mjs</code></a>. State files and the HTTP API are documented in <a href="https://github.com/FiredMosquito831/claude-cache-warm/blob/main/docs/CONTRACT.md" rel="noopener"><code>docs/CONTRACT.md</code></a>.</p>
+    </section>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,316 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="hero">
+  <div class="shell hero-grid">
+    <div class="hero-copy">
+      <p class="eyebrow"><span class="eyebrow-dot"></span>Claude Code plugin <span class="sep">/</span> v{{ version }}</p>
+      <h1>Come back to a conversation that’s <em>still warm.</em></h1>
+      <p class="lede">Cache Warm sends one tiny keep-alive turn to idle Claude Code sessions before their prompt cache expires — so returning to a long context doesn't start with a full-price rewrite.</p>
+      <div class="actions">
+        <a class="btn btn-primary" href="#install">
+          Install the plugin
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h9M8.5 3.5 13 8l-4.5 4.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </a>
+        <a class="btn btn-ghost" href="#how-it-works">How it works</a>
+      </div>
+      <p class="hero-note">Works in the CLI, IDE extensions, and the Desktop app. Node {{ node_range }}+. Zero runtime dependencies.</p>
+    </div>
+
+    <div class="hero-visual" aria-label="Illustration of the Cache Warm thermostat with sample sessions">
+      <div class="panel">
+        <div class="panel-top">
+          <span class="panel-label">Cache thermostat</span>
+          <span class="live"><i></i>live</span>
+        </div>
+
+        <div class="gauge-wrap">
+          <div class="gauge" style="--pct: 83.3">
+            <div class="gauge-inner">
+              <span class="gauge-value">{{ auto_interval['1h'] }}<small>m</small></span>
+              <span class="gauge-caption">auto interval</span>
+            </div>
+          </div>
+          <div class="gauge-side">
+            <div class="gauge-k"><span>Cache TTL</span><b>1 hour</b></div>
+            <div class="gauge-k"><span>Warm at</span><b>{{ auto_interval['1h'] }} min</b></div>
+            <div class="gauge-k"><span>Time left</span><b>41m 55s</b></div>
+            <div class="gauge-k"><span>Idle cap</span><b>{{ defaults.maxIdleMinutes }} min</b></div>
+          </div>
+        </div>
+
+        <div class="timeline" aria-hidden="true">
+          <div class="timeline-track"><span class="timeline-fill"></span><span class="timeline-ping"></span></div>
+          <div class="timeline-labels"><span>last request</span><span>{{ auto_interval['1h'] }}m ping</span><span>60m TTL</span></div>
+        </div>
+
+        <div class="sessions">
+          <div class="session">
+            <span class="s-dot on"></span>
+            <div class="s-main"><b>264db9fa</b><span>CLI · 245.3k ctx</span></div>
+            <div class="s-state"><b>31m 55s</b><span>next ping</span></div>
+          </div>
+          <div class="session">
+            <span class="s-dot on"></span>
+            <div class="s-main"><b>a3398cd8</b><span>Desktop · 466.9k ctx <i class="chip">1 bg job</i></span></div>
+            <div class="s-state"><b>25m 55s</b><span>next ping</span></div>
+          </div>
+        </div>
+
+        <div class="statusline" aria-hidden="true"><span class="sl-dot"></span>warm on, ping in 31m 55s <span class="sl-sep">·</span> ctx 245.3k, cached 243.8k (99%) <span class="sl-sep">·</span> 1h cache, 41m 55s left</div>
+        <p class="panel-foot">Illustration. Values come from the shipped defaults and docs.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="shell stat-strip" aria-label="Defaults at a glance">
+    <div><b>{{ auto_interval['1h'] }} min</b><span>auto interval on a 1-hour cache</span></div>
+    <div><b>{{ auto_interval['5m'] }} min</b><span>auto interval on a 5-minute cache</span></div>
+    <div><b>{{ defaults.maxIdleMinutes }} min</b><span>idle cap before pings stop</span></div>
+    <div><b>{{ "{:,}".format(defaults.minContextTokens) }}</b><span>token floor — smaller contexts are skipped</span></div>
+  </div>
+</section>
+
+<section class="band band-ink section-problem" id="problem">
+  <div class="shell">
+    <div class="section-head split">
+      <div>
+        <p class="eyebrow"><span class="num">01</span> The cold return</p>
+        <h2>The most expensive turn is the one after you leave.</h2>
+      </div>
+      <p class="section-intro">Claude Code re-sends the whole conversation on every turn. The prompt cache makes that cheap — until the conversation sits still for longer than the cache TTL.</p>
+    </div>
+
+    <div class="problem-grid">
+      <div class="copy-stack">
+        <p>The cache expires after a period of silence: <strong>5 minutes</strong> on an API key, <strong>1 hour</strong> on a Claude subscription or with <code>CLAUDE_CODE_PROMPT_CACHE_TTL=1h</code>. The first turn after expiry re-writes everything at 1.25× (5m) or 2× (1h) input price — and it is slow.</p>
+        <p>Every cache hit resets the timer. One tiny turn shortly before expiry keeps a large context alive for a fraction of the rebuild. Cache Warm automates exactly that, and only when the session is genuinely idle.</p>
+        <div class="inline-pills">
+          <span>5m TTL → ping every {{ auto_interval['5m'] }}m</span>
+          <span>1h TTL → ping every {{ auto_interval['1h'] }}m</span>
+          <span>interval must be shorter than TTL</span>
+        </div>
+      </div>
+
+      <div class="cost-card">
+        <div class="cost-head"><span>800K-token context</span><span>Opus 5 · 1h cache</span></div>
+        <div class="cost-row">
+          <div class="cost-meta"><span>One keep-alive ping</span><b class="cost-num">~${{ cost_example.ping }}</b></div>
+          <div class="bar"><span style="width: 5%"></span></div>
+          <p>one cache read of the whole context</p>
+        </div>
+        <div class="cost-row">
+          <div class="cost-meta"><span>Cold return after 90 minutes</span><b class="cost-num hot">~${{ cost_example.rebuild }}</b></div>
+          <div class="bar hot"><span style="width: 100%"></span></div>
+          <p>one cache write of the whole context</p>
+        </div>
+        <p class="cost-foot">List-price estimates from the plugin's own pricing table. One rebuild buys roughly {{ cost_example.break_even }} pings. On a subscription the same tokens come out of your usage limits.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section section-how" id="how-it-works">
+  <div class="shell">
+    <div class="section-head split">
+      <div>
+        <p class="eyebrow"><span class="num">02</span> How it works</p>
+        <h2>One waker per session. No daemon, no cron.</h2>
+      </div>
+      <p class="section-intro">The plugin is an ordinary Claude Code hook. At every turn end it starts a small sleeping process for that session. If the session is still idle one interval later, Claude Code wakes it with one line.</p>
+    </div>
+
+    <ol class="steps">
+      <li class="step">
+        <span class="step-num">1</span>
+        <div class="step-body">
+          <p class="step-tag">Stop hook · asyncRewake</p>
+          <h3>The turn ends</h3>
+          <p>A waker starts for this session and records Claude Code's own <code>background_tasks</code> and <code>session_crons</code>.</p>
+        </div>
+      </li>
+      <li class="step">
+        <span class="step-num">2</span>
+        <div class="step-body">
+          <p class="step-tag">sleep until last request + interval</p>
+          <h3>The timer runs</h3>
+          <p>Any new request — you typing, an agent reporting back, a task firing — supersedes the sleeping waker. The next turn end starts a fresh one.</p>
+        </div>
+      </li>
+      <li class="step">
+        <span class="step-num">3</span>
+        <div class="step-body">
+          <p class="step-tag">wake, re-check, decide</p>
+          <h3>Still worth warming?</h3>
+          <p>It re-checks background work, this session's scoped settings, the idle cap, the token floor, and whether the cache is still alive.</p>
+        </div>
+      </li>
+      <li class="step">
+        <span class="step-num">4</span>
+        <div class="step-body">
+          <p class="step-tag">exit 2 → one turn → cache read</p>
+          <h3>Claude answers “ok”</h3>
+          <p>A one-line keep-alive note reaches the idle session. Claude replies <code>ok</code>; that turn reads the whole context from cache and resets the TTL.</p>
+        </div>
+      </li>
+    </ol>
+
+    <div class="guardrails">
+      <p class="guardrails-title">It stands down when warming would not pay for itself.</p>
+      <ul class="check-list">
+        <li>No pending background work <span>default policy</span></li>
+        <li>Cache already expired <span>a ping would <em>be</em> the rewrite</span></li>
+        <li>Past <code>maxIdleMinutes</code> <span>or the ping cap</span></li>
+        <li>Context below <code>minContextTokens</code> <span>cheap to rebuild</span></li>
+        <li>Warming off for that scope <span>session / project / surface / global</span></li>
+        <li>Headless runs <span><code>claude -p</code>, Agent SDK</span></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="section section-features" id="features">
+  <div class="shell">
+    <div class="section-head">
+      <p class="eyebrow"><span class="num">03</span> What's in the box</p>
+      <h2>Small surface, deliberate controls.</h2>
+    </div>
+
+    <div class="feature-grid">
+      <article class="feature">
+        <span class="feature-icon">{{ icon('layers') }}</span>
+        <h3>Scoped settings</h3>
+        <p>Session overrides beat project folders, which beat the surface (CLI, Desktop, IDE), global settings, the plugin tab, and the defaults. Anything unset inherits.</p>
+        <p class="feature-mono">session › project › surface › global</p>
+      </article>
+      <article class="feature">
+        <span class="feature-icon">{{ icon('line') }}</span>
+        <h3>A status line that wraps, not replaces</h3>
+        <p>Warming state, next ping, context, cached tokens, remaining TTL, model, branch, PR, fill and limits. Your existing status line runs first and keeps its output.</p>
+        <p class="feature-mono">one setting restores the originals</p>
+      </article>
+      <article class="feature">
+        <span class="feature-icon">{{ icon('check') }}</span>
+        <h3>Self-checking pings</h3>
+        <p>Every ping is judged from the transcript once its turn lands. A cache read is a hit; a rewrite is a miss. Two misses in a row suspend that session until you are active again.</p>
+        <p class="feature-mono">/cache-warm:test proves the loop</p>
+      </article>
+      <article class="feature">
+        <span class="feature-icon">{{ icon('chart') }}</span>
+        <h3>A local dashboard</h3>
+        <p>Live sessions and countdowns, every scope's settings with inherited values, and analytics mined read-only from your own transcripts. Loopback only.</p>
+        <p class="feature-mono">127.0.0.1:{{ defaults.dashboardPort }}</p>
+      </article>
+      <article class="feature">
+        <span class="feature-icon">{{ icon('tray') }}</span>
+        <h3>Optional tray app</h3>
+        <p>A thin Tauri v2 tray for the global scope. <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>W</kbd> toggles warming; <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>D</kbd> opens the dashboard.</p>
+        <p class="feature-mono">desktop/ · built with npm</p>
+      </article>
+      <article class="feature">
+        <span class="feature-icon">{{ icon('shield') }}</span>
+        <h3>Isolation by construction</h3>
+        <p>Each session has its own waker and resolves its own settings. A Desktop session cannot change a CLI session by accident. Writes are locked and atomic.</p>
+        <p class="feature-mono">no shared engine switch</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section class="section section-shot" id="dashboard-preview">
+  <div class="shell">
+    <div class="section-head split">
+      <div>
+        <p class="eyebrow"><span class="num">04</span> The dashboard</p>
+        <h2>See what each session is waiting on.</h2>
+      </div>
+      <p class="section-intro">A real capture of the local dashboard with sample sessions. It binds to loopback, computes analytics read-only from <code>~/.claude/projects/**/*.jsonl</code>, and edits every scope with “Inherit” showing what each field falls back to.</p>
+    </div>
+    <figure class="shot-frame">
+      <div class="shot-chrome"><span></span><span></span><span></span><b>127.0.0.1:{{ defaults.dashboardPort }}</b></div>
+      <img src="/assets/screenshots/dashboard.png" width="1440" height="1750" alt="Cache Warm dashboard: live sessions with next ping countdowns, scoped settings, and cache analytics" loading="lazy">
+      <figcaption>Local dashboard, sample data. Each row has its own timer and its own effective settings.</figcaption>
+    </figure>
+    <div class="shot-links">
+      <a class="text-link" href="/dashboard/">What the dashboard shows <span>→</span></a>
+      <a class="text-link" href="/reference/">Every setting and scope <span>→</span></a>
+    </div>
+  </div>
+</section>
+
+<section class="section section-config" id="configuration">
+  <div class="shell">
+    <div class="section-head split">
+      <div>
+        <p class="eyebrow"><span class="num">05</span> Configuration</p>
+        <h2>Defaults that do the right thing.</h2>
+      </div>
+      <p class="section-intro">Most sessions need no configuration at all. These values live in <code>scripts/lib.mjs</code>; this table is generated from them at build time.</p>
+    </div>
+
+    <div class="table-wrap config-table">
+      <table>
+        <thead><tr><th>Setting</th><th>Default</th><th>What it does</th><th>Scopes</th></tr></thead>
+        <tbody>
+        {% for opt in core_options %}
+          <tr>
+            <td><code>{{ opt.key }}</code></td>
+            <td><span class="default-val">{{ opt.default_display }}</span></td>
+            <td>{{ opt.summary }}</td>
+            <td><span class="scope-tag">{{ 'global only' if opt.global_only else 'all scopes' }}</span></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="table-note">Three more keys are global-only: <code>statusline</code> (<code>{{ defaults.statusline }}</code>), <code>statuslineSegments</code> ({{ defaults.statuslineSegments|length }} available parts), and <code>dashboardPort</code> (<code>{{ defaults.dashboardPort }}</code>). <a href="/reference/">Full reference →</a></p>
+  </div>
+</section>
+
+<section class="section band band-ink section-install" id="install">
+  <div class="shell install-grid">
+    <div>
+      <p class="eyebrow"><span class="num">06</span> Install</p>
+      <h2>Two commands, then a new session.</h2>
+      <p class="section-intro">Cache Warm installs as a Claude Code plugin from its own marketplace. Nothing is downloaded from npm; the plugin has no runtime dependencies.</p>
+      <div class="requirements">
+        <span><b>Node</b> {{ node_range }}+ on <code>PATH</code></span>
+        <span><b>Claude Code</b> recent enough for asyncRewake hooks</span>
+      </div>
+    </div>
+    <div class="install-card">
+      <p class="install-label">Inside Claude Code</p>
+      <div class="code-block" data-copy>
+        <pre><code>/plugin marketplace add FiredMosquito831/claude-cache-warm
+/plugin install cache-warm@claude-cache-warm</code></pre>
+        <button type="button" class="copy" data-copy-btn aria-label="Copy install commands">Copy</button>
+      </div>
+      <p class="install-label">Then, in each open session</p>
+      <div class="code-block" data-copy>
+        <pre><code>/reload-plugins</code></pre>
+        <button type="button" class="copy" data-copy-btn aria-label="Copy reload command">Copy</button>
+      </div>
+      <p class="install-note">Defaults: warming on, interval <code>auto</code>, only while a subagent, background task or scheduled task is pending. Verify with <code>/cache-warm:status</code> and <code>/cache-warm:test</code>.</p>
+      <a class="text-link light" href="https://github.com/FiredMosquito831/claude-cache-warm/blob/main/docs/TUTORIAL.md" rel="noopener">Read the full tutorial <span>→</span></a>
+    </div>
+  </div>
+</section>
+
+<section class="section section-faq-tease">
+  <div class="shell tease">
+    <div>
+      <p class="eyebrow"><span class="num">07</span> Questions</p>
+      <h2>“Will it actually save money?”</h2>
+      <p class="section-intro">Only if the pause is long enough and the context is big enough. The dashboard shows your real rebuilds and what warming would have cost instead. The FAQ covers cost, safety, subscriptions, and the cases where warming is deliberately skipped.</p>
+      <a class="btn btn-primary" href="/faq/">Read the FAQ <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h9M8.5 3.5 13 8l-4.5 4.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
+    </div>
+    <ul class="mini-faq">
+      <li><a href="/faq/#safe"><span>Does it invalidate my cache?</span><b>No</b></a></li>
+      <li><a href="/faq/#cost"><span>What does a ping cost?</span><b>One cache read</b></a></li>
+      <li><a href="/faq/#subscription"><span>Does it count against usage?</span><b>Yes</b></a></li>
+      <li><a href="/faq/#no-ping"><span>Why is my session not pinging?</span><b>Six guards</b></a></li>
+      <li><a href="/faq/#conversation"><span>What gets added to the chat?</span><b>Two short messages</b></a></li>
+    </ul>
+  </div>
+</section>
+{% endblock %}

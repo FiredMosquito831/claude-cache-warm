@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dashboard, status line and tray — Cache Warm</title>
+<meta name="description" content="The local Cache Warm dashboard: live sessions, per-scope settings, cache analytics from local transcripts. Plus the automatic status line segment and the optional tray app.">
+<meta name="keywords" content="Cache Warm dashboard, Claude Code cache analytics, status line, tray app, Tauri, prompt cache monitor">
+<meta name="author" content="FiredMosquito831">
+<meta name="robots" content="index,follow">
+<link rel="canonical" href="https://cachewarm.danubelabs.net/dashboard/">
+<meta name="theme-color" content="#f6efe2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#17120e" media="(prefers-color-scheme: dark)">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Cache Warm">
+<meta property="og:title" content="Dashboard, status line and tray — Cache Warm">
+<meta property="og:description" content="The local Cache Warm dashboard: live sessions, per-scope settings, cache analytics from local transcripts. Plus the automatic status line segment and the optional tray app.">
+<meta property="og:url" content="https://cachewarm.danubelabs.net/dashboard/">
+<meta property="og:image" content="https://cachewarm.danubelabs.net/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Cache Warm — prompt-cache keep-alive for Claude Code">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Dashboard, status line and tray — Cache Warm">
+<meta name="twitter:description" content="The local Cache Warm dashboard: live sessions, per-scope settings, cache analytics from local transcripts. Plus the automatic status line segment and the optional tray app.">
+<meta name="twitter:image" content="https://cachewarm.danubelabs.net/og.png">
+<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/assets/favicon.svg">
+<link rel="preload" href="/assets/fonts/fraunces-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/assets/fonts/inter-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/assets/css/style.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Cache Warm",
+  "alternateName": "claude-cache-warm",
+  "applicationCategory": "DeveloperApplication",
+  "applicationSubCategory": "Claude Code plugin",
+  "operatingSystem": "Windows, macOS, Linux",
+  "softwareVersion": "0.5.2",
+  "softwareRequirements": "Node.js 18+ and a Claude Code version that supports asyncRewake hooks",
+  "description": "Keep-alive pings for idle Claude Code sessions. Scoped settings, a status line segment, a local dashboard and a self-checking waker. Node 18+, zero runtime dependencies.",
+  "url": "https://cachewarm.danubelabs.net/",
+  "codeRepository": "https://github.com/FiredMosquito831/claude-cache-warm",
+  "downloadUrl": "https://github.com/FiredMosquito831/claude-cache-warm",
+  "license": "https://opensource.org/licenses/MIT",
+  "isAccessibleForFree": true,
+  "author": {
+    "@type": "Person",
+    "name": "FiredMosquito831",
+    "url": "https://github.com/FiredMosquito831"
+  },
+  "offers": {
+    "@type": "Offer",
+    "price": "0",
+    "priceCurrency": "USD"
+  },
+  "keywords": "Claude Code plugin, prompt cache, cache warm, keep-alive, prompt caching, Claude Code cost, cache TTL, status line, ccw",
+  "featureList": [
+    "Keep-alive pings for idle Claude Code sessions",
+    "Session, project, surface and global scopes",
+    "Status line segment that wraps an existing line",
+    "Local dashboard with transcript analytics",
+    "Verified pings with automatic suspension after misses"
+  ]
+}
+</script>
+</head>
+<body class="page-dashboard">
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site-head" data-head>
+  <div class="shell head-inner">
+    <a class="brand" href="/" aria-label="Cache Warm home">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 32 32" fill="none"><path d="M16 4.5c2.4 3.6 7.5 7.4 7.5 13.1A7.5 7.5 0 0 1 16 25a7.5 7.5 0 0 1-7.5-7.4C8.5 11.9 13.6 8.1 16 4.5Z" stroke="currentColor" stroke-width="1.7"/><path d="M16 12c1.2 1.9 3.2 3.4 3.2 6a3.2 3.2 0 1 1-6.4 0c0-2.6 2-4.1 3.2-6Z" fill="currentColor"/></svg>
+      </span>
+      <span class="brand-word">Cache<em>Warm</em></span>
+      <span class="brand-ver">v0.5.2</span>
+    </a>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="nav" data-nav-toggle>
+      <span class="sr-only">Menu</span><span></span><span></span>
+    </button>
+    <nav class="nav" id="nav" aria-label="Primary">
+      <a href="/" >Overview</a>
+      <a href="/reference/" >Reference</a>
+      <a href="/dashboard/" aria-current="page">Dashboard</a>
+      <a href="/faq/" >FAQ</a>
+      <a href="/security/" >Security</a>
+      <a class="nav-gh" href="https://github.com/FiredMosquito831/claude-cache-warm" rel="noopener">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+        GitHub
+      </a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+<header class="page-head page-head-dash">
+  <div class="shell">
+    <p class="eyebrow"><span class="eyebrow-dot"></span>Dashboard <span class="sep">/</span> status line <span class="sep">/</span> tray</p>
+    <h1>A window into every timer.</h1>
+    <p class="lede">Cache Warm is mostly invisible: a hook, a sleeping waker, and one line on your status bar. The local dashboard is where all of it becomes observable — one row per session, one tab per scope, and analytics built from your own transcripts.</p>
+    <div class="actions">
+      <span class="command-pill"><code>ccw dashboard</code><button type="button" class="copy-inline" data-copy-btn data-copy-text="ccw dashboard">Copy</button></span>
+      <a class="text-link" href="https://github.com/FiredMosquito831/claude-cache-warm/blob/main/docs/CONTRACT.md" rel="noopener">HTTP API contract <span>→</span></a>
+    </div>
+  </div>
+</header>
+
+<section class="section">
+  <div class="shell">
+    <figure class="shot-frame shot-frame-wide">
+      <div class="shot-chrome"><span></span><span></span><span></span><b>127.0.0.1:4777 — sample data</b></div>
+      <img src="/assets/screenshots/dashboard.png" width="1440" height="1750" alt="The Cache Warm dashboard: live sessions, scope settings, cache hit ratio, cold rebuilds and recent rebuild table" loading="eager">
+      <figcaption>Real dashboard, sample sessions. Analytics are computed read-only from <code>~/.claude/projects/**/*.jsonl</code>.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section class="section section-dash-detail">
+  <div class="shell">
+    <div class="detail-grid">
+      <article class="detail">
+        <p class="eyebrow"><span class="num">01</span> Live sessions</p>
+        <h2>Every session, its own countdown.</h2>
+        <p>Each open session gets a row: session id and model, surface and project, status, next ping, context size, cache TTL, time since activity, pings since activity, the estimated cost of one ping and of a cold return, and the session's own settings.</p>
+        <p>“Inherit (…)”, on a per-session control, shows the value the session would get otherwise and where it comes from. Pause, Resume and Reset act on that one session only.</p>
+        <ul class="dot-list">
+          <li><span class="st-dot warming"></span><b>Warming</b> — a live timer is counting down</li>
+          <li><span class="st-dot busy"></span><b>Turn in progress</b> — the conversation is refreshing its own cache</li>
+          <li><span class="st-dot no-work"></span><b>Standing by</b> — nothing pending in the background</li>
+          <li><span class="st-dot expired"></span><b>Cache expired</b> — deliberately not re-written</li>
+        </ul>
+      </article>
+
+      <article class="detail">
+        <p class="eyebrow"><span class="num">02</span> Settings</p>
+        <h2>One panel for every scope.</h2>
+        <p>Tabs for Global, CLI, Desktop app, IDE, and each project folder. Every field starts on “Inherit”; pick a value to set it at that tab's scope, or set it back to Inherit to clear it.</p>
+        <p>“Add project” creates a scope for any folder (suggestions come from your sessions' folders). “Reset this scope” clears everything at that scope. Changes reach running sessions within seconds — no restart.</p>
+        <div class="mini-code"><span>session</span><i>›</i><span>project</span><i>›</i><span>surface</span><i>›</i><span>global</span></div>
+        <p class="aside-note">The global tab is the only place that edits <code>dashboardPort</code>, <code>statusline</code> and <code>statuslineSegments</code>.</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section class="section band band-ink section-analytics">
+  <div class="shell">
+    <div class="section-head split">
+      <div>
+        <p class="eyebrow"><span class="num">03</span> Analytics</p>
+        <h2>What your pauses actually cost.</h2>
+      </div>
+      <p class="section-intro">Nothing is uploaded. The dashboard parses your local transcripts, deduplicates repeated usage lines, and keeps an incremental parse cache under <code>~/.claude-cache-warm/analytics-cache.json</code>.</p>
+    </div>
+    <div class="metric-grid">
+      <div class="metric"><span class="metric-k">Cache hit ratio</span><b>% of input tokens read from cache</b><p>with tokens read, written, requests and sessions in the range</p></div>
+      <div class="metric"><span class="metric-k">Cold rebuilds</span><b>count and tokens</b><p>times you returned after the TTL and rewrote the context</p></div>
+      <div class="metric"><span class="metric-k">Avoidable with warming</span><b>USD estimate</b><p>rebuild cost minus ping cost, for pauses inside your idle cap</p></div>
+      <div class="metric"><span class="metric-k">Pings sent</span><b>verified hits</b><p>how many were checked against the transcript and landed as cache reads</p></div>
+    </div>
+    <div class="chart-note">
+      <div>
+        <h3>Where the cache dies</h3>
+        <p>Pauses of five minutes or more, by length. Orange pauses ended in a full-price rewrite; blue ones survived. Hover or focus any column for the counts.</p>
+      </div>
+      <div>
+        <h3>Tokens rewritten after expiry, per day</h3>
+        <p>Context that had to be re-cached because a session sat idle past its TTL, alongside the day's request count.</p>
+      </div>
+    </div>
+    <p class="analytics-foot">Range: today, 7 days, or 30 days. Everything is read-only. On a subscription, list prices shown here are an accounting aid, not money leaving your account.</p>
+  </div>
+</section>
+
+<section class="section section-statusline">
+  <div class="shell">
+    <div class="section-head split">
+      <div>
+        <p class="eyebrow"><span class="num">04</span> Status line</p>
+        <h2>Your line, plus a pulse.</h2>
+      </div>
+      <p class="section-intro">On by default. At every session start the segment is kept on the status line that session will show. It wraps the command you already have; the installer remembers the original and restores it exactly when you turn the segment off.</p>
+    </div>
+
+    <div class="sl-demo" aria-label="Example status line">
+      <div class="sl-theirs">⬆ /release-check</div>
+      <div class="sl-ours">
+        <span class="sl-part">Opus 5.5</span>
+        <span class="sl-part">my-project</span>
+        <span class="sl-part">⎇ feature/cache</span>
+        <span class="sl-part sl-warm"><span class="sl-dot"></span>warm on, ping in 31m 55s <i>(1 bg job)</i></span>
+        <span class="sl-part">ctx 245.3k, cached 243.8k (99%)</span>
+        <span class="sl-part">1h cache, 41m 55s left</span>
+      </div>
+    </div>
+    <p class="sl-caption">Illustrative line built from the documented sample and the default segment order. Your own command's output stays first and untouched.</p>
+
+    <div class="statusline-grid">
+      <div>
+        <h3>Parts you can show</h3>
+        <div class="chips">
+<span class="chip">model</span><span class="chip">folder</span><span class="chip">branch</span><span class="chip">pr</span><span class="chip">warm</span><span class="chip">context</span><span class="chip">cache</span><span class="chip">fill</span><span class="chip">limits</span><span class="chip">cost</span>        </div>
+        <p>Choose and order them: <code>ccw set statuslineSegments model,folder,warm,context,cache,fill,limits</code>. <code>cost</code> is opt-in because a list-price estimate misleads on a subscription.</p>
+      </div>
+      <div>
+        <h3>Modes</h3>
+        <ul class="mode-list">
+          <li><code>auto</code><span>add the segment to every status line, creating one if you have none</span></li>
+          <li><code>wrap-only</code><span>only add it where a status line already exists</span></li>
+          <li><code>off</code><span>restore every original exactly, and keep it that way</span></li>
+        </ul>
+        <p class="aside-note">Only personal files are edited. A shared project <code>settings.json</code> is never touched; the segment goes into a git-ignored <code>settings.local.json</code> overlay.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section section-tray">
+  <div class="shell tray-grid">
+    <div>
+      <p class="eyebrow"><span class="num">05</span> Tray app</p>
+      <h2>Global controls within reach.</h2>
+      <p>The repository also ships an optional <a href="https://github.com/FiredMosquito831/claude-cache-warm/tree/main/desktop" rel="noopener">Tauri v2 tray app</a> for the global scope: on/off, background-work only, and interval. It registers system-wide shortcuts, starts the dashboard if it is not running, and takes the same config lock as everything else.</p>
+      <div class="hotkeys">
+        <div><kbd>Ctrl</kbd><span>+</span><kbd>Alt</kbd><span>+</span><kbd>W</kbd><p>Toggle global warming</p></div>
+        <div><kbd>Ctrl</kbd><span>+</span><kbd>Alt</kbd><span>+</span><kbd>D</kbd><p>Open the dashboard</p></div>
+      </div>
+      <p class="aside-note">Change or disable the shortcuts in <code>~/.claude-cache-warm/desktop.json</code>, then restart the app.</p>
+    </div>
+    <div class="tray-card">
+      <p class="tray-title">Follow the loop</p>
+      <ol class="tray-steps">
+        <li><span>1</span><p>Let a session go idle with a background agent running.</p></li>
+        <li><span>2</span><p>Watch its row switch to <b>Warming</b> and count down to the next ping.</p></li>
+        <li><span>3</span><p>Open Analytics and compare cold rebuilds with the pings you sent.</p></li>
+        <li><span>4</span><p>If a ping is ever a miss, the session is suspended rather than left paying for rewrites.</p></li>
+      </ol>
+      <a class="text-link" href="/faq/#no-ping">Why a session might not ping <span>→</span></a>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer class="site-foot">
+  <div class="shell foot-grid">
+    <div class="foot-brand">
+      <div class="brand brand-foot">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 32 32" fill="none"><path d="M16 4.5c2.4 3.6 7.5 7.4 7.5 13.1A7.5 7.5 0 0 1 16 25a7.5 7.5 0 0 1-7.5-7.4C8.5 11.9 13.6 8.1 16 4.5Z" stroke="currentColor" stroke-width="1.7"/><path d="M16 12c1.2 1.9 3.2 3.4 3.2 6a3.2 3.2 0 1 1-6.4 0c0-2.6 2-4.1 3.2-6Z" fill="currentColor"/></svg>
+        </span>
+        <span class="brand-word">Cache<em>Warm</em></span>
+      </div>
+      <p>Keep-alive pings for idle Claude Code sessions.<br>A local hook, a small waker, no daemon.</p>
+      <p class="foot-mono">v0.5.2 · MIT · Node 18+</p>
+    </div>
+    <nav class="foot-links" aria-label="Site">
+      <div>
+        <h2>Product</h2>
+        <a href="/reference/">Configuration</a>
+        <a href="/dashboard/">Dashboard</a>
+        <a href="/faq/">FAQ</a>
+        <a href="/security/">Security</a>
+      </div>
+      <div>
+        <h2>Source</h2>
+        <a href="https://github.com/FiredMosquito831/claude-cache-warm" rel="noopener">Repository</a>
+        <a href="https://github.com/FiredMosquito831/claude-cache-warm/blob/main/docs/TUTORIAL.md" rel="noopener">Tutorial</a>
+        <a href="https://github.com/FiredMosquito831/claude-cache-warm/blob/main/CHANGELOG.md" rel="noopener">Changelog</a>
+        <a href="https://github.com/FiredMosquito831/claude-cache-warm/blob/main/LICENSE" rel="noopener">MIT license</a>
+      </div>
+    </nav>
+  </div>
+  <div class="shell foot-base">
+    <span>© 2026 FiredMosquito831</span>
+    <span class="foot-domain">cachewarm.danubelabs.net</span>
+  </div>
+</footer>
+
+<script src="/assets/js/site.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="notfound">
+  <div class="shell notfound-inner">
+    <div class="nf-gauge" aria-hidden="true">
+      <div class="gauge" style="--pct: 2">
+        <div class="gauge-inner"><span class="gauge-value">0<small>m</small></span><span class="gauge-caption">cache cold</span></div>
+      </div>
+    </div>
+    <p class="eyebrow"><span class="eyebrow-dot cold"></span>404 <span class="sep">/</span> page expired</p>
+    <h1>This page went cold.</h1>
+    <p class="lede">The URL isn't here. The cache metaphor only goes so far — the pages below are still warm.</p>
+    <div class="actions">
+      <a class="btn btn-primary" href="/">Back to the overview <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h9M8.5 3.5 13 8l-4.5 4.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
+      <a class="btn btn-ghost" href="/reference/">Configuration reference</a>
+    </div>
+    <ul class="nf-links">
+      <li><a href="/dashboard/">Dashboard &amp; status line</a></li>
+      <li><a href="/faq/">FAQ</a></li>
+      <li><a href="/security/">Security</a></li>
+      <li><a href="https://github.com/FiredMosquito831/claude-cache-warm" rel="noopener">GitHub</a></li>
+    </ul>
+  </div>
+</section>
+{% endblock %}

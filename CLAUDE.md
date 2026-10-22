@@ -12,6 +12,7 @@ Parts:
 - **Status line segment**: `scripts/statusline*.mjs`.
 - **Local dashboard**: `dashboard/`.
 - **Optional Tauri v2 tray app**: `desktop/`.
+- **Generated docs site**: `site/` templates/styles and `scripts/build_site.py` render `docs/` (the GitHub Pages source, custom 404, sitemap, CNAME). `scripts/capture_site.py` captures the real site and dashboard with Playwright. Site-only Python dependency: `requirements-site.txt`.
 
 User-facing docs live in `README.md`, `docs/TUTORIAL.md`, `docs/CONTRACT.md` and `CHANGELOG.md`. CONTRACT documents every state file and the HTTP API; update it whenever their shape changes. The CHANGELOG records why each version changed what it did; read it before redesigning anything.
 
@@ -26,6 +27,8 @@ User-facing docs live in `README.md`, `docs/TUTORIAL.md`, `docs/CONTRACT.md` and
 
 ```sh
 npm test                                                     # all e2e tests (~15 s)
+python scripts/build_site.py                                 # regenerate docs/ from site/
+python scripts/build_site.py --check                         # CI: fail if docs/ is stale
 node --test --test-name-pattern="status line" test/e2e.test.mjs   # one test (or a regex)
 claude plugin validate .                                     # marketplace manifest
 claude plugin validate .claude-plugin/plugin.json            # plugin manifest
@@ -105,7 +108,7 @@ Every release gets a `CHANGELOG.md` entry (newest first). It says what changed f
 
 **Release checklist** (all of it, in order):
 1. `npm test` green; both `claude plugin validate` commands pass; `cargo check` if `desktop/` changed.
-2. Docs match the code: README, `docs/TUTORIAL.md`, and `docs/CONTRACT.md` for any state-file or API change. Skills (`skills/*/SKILL.md`) must not describe removed behaviour; a stale skill once told Claude to create cron jobs.
+2. Docs match the code: README, `docs/TUTORIAL.md`, and `docs/CONTRACT.md` for any state-file or API change. Run `python scripts/build_site.py` so the generated docs site picks up changed settings/defaults. Skills (`skills/*/SKILL.md`) must not describe removed behaviour; a stale skill once told Claude to create cron jobs.
 3. Bump the version in the three places, and add the CHANGELOG entry.
 4. Commit: a subject line, then a body that explains root causes rather than just listing files, then a blank line and `by FiredMosquito831`. Use the git identity already configured; never pass `-c user.name/-c user.email` (that once had to be undone with `--amend --reset-author`).
 5. Ship through a feature branch and a pull request, never by pushing straight to `main`: a fresh `git worktree add` from `origin/main` on a new branch, push the branch, `gh pr create`, then `gh pr merge --squash --delete-branch` once the user says to merge. Then remove the worktree. Then tell them: `/plugin` → update, then `/reload-plugins` in every open session, then `ccw doctor` and `/cache-warm:test` (in the CLI *and* the Desktop app).

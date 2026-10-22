@@ -4,3 +4,6 @@ desktop/src-tauri/gen/
 *.tmp
 .DS_Store
 .idea/
+__pycache__/
+.venv/
+.scratch/
