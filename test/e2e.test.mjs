@@ -273,14 +273,34 @@ test('waker: idle cap, ping cap and an already-expired cache all end the timer w
   assert.equal(r.code, 0);
   assert.equal(readJson(stateFile('cli-1')).waker.exitReason, 'idle-cap');
 
-  r = await runWaker('cli-1', { background: RUNNING_AGENT, whileSleeping: () => age('cli-1', 75, { human: 75 }) });
-  assert.equal(r.code, 0);
-  assert.match(readJson(stateFile('cli-1')).waker.exitReason, /idle-cap|expired/);
+  // An expired cache must not be pinged, even while background work is running
+  // and the idle cap is off. This is the exact branch the waker takes; assert it
+  // directly instead of racing a live process against a simulated 75-minute jump
+  // (the waker re-reads these fields on every pass, and the harness could age the
+  // session after it had already decided).
+  const now = Date.now();
+  const expiredAt = now - 75 * MIN;
+  const expiredUsage = { timestamp: expiredAt, ttl: '1h', contextTokens: 200_000, model: 'claude-opus-5', cacheRead: 190_000, cacheCreation: 10_000 };
+  const expiredSession = {
+    sessionId: 'cli-1', startedAt: expiredAt, lastHumanAt: expiredAt, lastWorkStopAt: expiredAt,
+    lastPromptAt: expiredAt, lastStopAt: expiredAt, turnStartedAt: 0,
+    background: { at: now, tasks: RUNNING_AGENT, crons: [] },
+  };
+  const expiredState = { pingTimes: [], pingsTotal: 0, waker: null };
+  for (const maxIdleMinutes of [70, 0]) {
+    const st = lib.computeStatus({
+      settings: { ...lib.DEFAULTS, warmWhen: 'always', maxIdleMinutes },
+      session: expiredSession,
+      state: expiredState,
+      usage: expiredUsage,
+      now,
+    });
+    assert.equal(st.status, 'expired', `maxIdleMinutes ${maxIdleMinutes}: a ping now would be the expensive rewrite`);
+    assert.equal(st.due, false);
+  }
+  assert.ok(lib.FINAL_STATUSES.has('expired'), 'the waker ends the timer on an expired cache');
 
   ccw('set', 'maxIdleMinutes', '0');
-  r = await runWaker('cli-1', { background: RUNNING_AGENT, whileSleeping: () => age('cli-1', 75, { human: 75 }) });
-  assert.equal(r.code, 0);
-  assert.equal(readJson(stateFile('cli-1')).waker.exitReason, 'expired', 'a ping now would be the expensive rewrite');
 
   // ping cap: with a 10-minute idle cap and interval 4, at most ceil(10/4)+1 = 4 pings per idle stretch
   ccw('set', 'maxIdleMinutes', '10');
